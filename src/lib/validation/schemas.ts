@@ -146,7 +146,7 @@ export type StyleProfile = z.infer<typeof StyleProfileSchema>;
 
 export const VisualAssetSchema = z.object({
   type: VisualModeSchema,
-  provider: z.enum(["pexels", "pixabay", "generated"]),
+  provider: z.enum(["pexels", "pixabay", "openverse", "generated"]),
   url: z.string().nullable(),
   svgData: z.string().nullable(),
   thumbnailUrl: z.string().nullable(),

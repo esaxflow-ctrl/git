@@ -2,6 +2,7 @@ import { ScenePlan, StyleProfile, VisualAsset } from "../validation/schemas";
 import { assetCache, assetCacheKey } from "../cache";
 import { fetchFromPexels } from "./pexels";
 import { fetchFromPixabay } from "./pixabay";
+import { fetchFromOpenverse } from "./openverse";
 import { generateMotionGraphic } from "./motionGraphics";
 
 async function tryProvider(
@@ -31,18 +32,24 @@ export async function resolveVisual(
   let asset: VisualAsset | null = null;
 
   if (!needsGenerated) {
-    // Try Pexels (handles both video and image)
+    // 1. Pexels — video OR image, requires API key
     if (process.env.PEXELS_API_KEY) {
       asset = await tryProvider("pexels", () => fetchFromPexels(scene));
     }
 
-    // Try Pixabay (images only)
-    if (!asset && !needsVideo) {
+    // 2. Pixabay — images only, requires API key (key is optional but usually needed)
+    if (!asset && !needsVideo && process.env.PIXABAY_API_KEY) {
       asset = await tryProvider("pixabay", () => fetchFromPixabay(scene));
+    }
+
+    // 3. Openverse — free, no API key required, CC-licensed images
+    // Used for stockImage, and for stockVideo fallback (still image instead of SVG card)
+    if (!asset) {
+      asset = await tryProvider("openverse", () => fetchFromOpenverse(scene));
     }
   }
 
-  // Always-available fallback: generated SVG
+  // 4. Always-available final fallback: generated SVG motion graphic
   if (!asset) {
     asset = generateMotionGraphic(scene, style);
   }

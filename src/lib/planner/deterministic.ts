@@ -31,15 +31,18 @@ const STOPWORDS = new Set([
 
 // ─── Visual Mode & Role Sequences ─────────────────────────────────────────────
 
+// Photo-first rotation: real photos for the majority, SVG cards as
+// rhythmic punctuation. Each photo is unique (Openverse search per scene)
+// so this still avoids the "everything looks the same" failure mode.
 const VISUAL_MODES: VisualMode[] = [
-  "stockVideo",
   "stockImage",
   "quoteCard",
-  "gradientMotionCard",
+  "stockImage",
+  "stockImage",
   "evidenceCard",
+  "stockImage",
   "textCard",
-  "timelineCard",
-  "mapCard",
+  "stockImage",
 ];
 
 const PACING_PATTERN: PacingMode[] = [
