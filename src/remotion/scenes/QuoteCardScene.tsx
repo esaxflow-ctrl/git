@@ -1,4 +1,4 @@
-import { useCurrentFrame, interpolate, Easing } from "remotion";
+import { useCurrentFrame, useVideoConfig, spring, interpolate, Easing } from "remotion";
 import { ScenePlan, StyleProfile } from "../../lib/validation/schemas";
 
 interface Props {
@@ -8,18 +8,29 @@ interface Props {
 
 export function QuoteCardScene({ scene, style }: Props) {
   const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
 
-  const [bg, , accent] = style.colorStrategy.palette;
-  const { fontFamily, color } = style.captionStyle;
+  const [bg, bg2, accent] = style.colorStrategy.palette;
+  const { fontFamily, color, highlightColor } = style.captionStyle;
 
-  const fadeIn = interpolate(frame, [0, 20], [0, 1], {
-    easing: Easing.out(Easing.ease),
-    extrapolateRight: "clamp",
+  const fadeIn = interpolate(frame, [0, 10], [0, 1], { extrapolateRight: "clamp" });
+
+  // Opening quote mark drops in with spring
+  const quoteMarkProgress = spring({
+    frame: Math.max(0, frame - 2),
+    fps,
+    config: { damping: 14, stiffness: 120, mass: 1.3 },
   });
 
-  const quoteSlide = interpolate(frame, [0, 20], [30, 0], {
-    easing: Easing.out(Easing.ease),
+  // Caption words spring in one by one
+  const words = scene.caption.split(" ");
+  const emphasisSet = new Set(scene.emphasisWords.map((w) => w.toLowerCase()));
+
+  // Divider + attribution slide up
+  const attrOpacity = interpolate(frame, [24, 36], [0, 1], { extrapolateRight: "clamp" });
+  const attrSlide = interpolate(frame, [24, 36], [14, 0], {
     extrapolateRight: "clamp",
+    easing: Easing.out(Easing.ease),
   });
 
   return (
@@ -27,85 +38,104 @@ export function QuoteCardScene({ scene, style }: Props) {
       style={{
         width: "100%",
         height: "100%",
-        background: bg ?? "#0a0a0a",
+        background: `linear-gradient(158deg, ${bg ?? "#0a0a0a"} 55%, ${bg2 ?? "#111111"} 100%)`,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
-        padding: "80px 60px",
+        padding: "100px 80px",
         opacity: fadeIn,
+        overflow: "hidden",
       }}
     >
-      {/* Opening quote mark */}
+      {/* Large opening quote mark */}
       <div
         style={{
-          fontSize: 180,
+          fontSize: 210,
           fontFamily: "Georgia, serif",
           color: accent ?? "#ffffff",
-          opacity: 0.15,
-          lineHeight: 1,
+          opacity: interpolate(quoteMarkProgress, [0, 1], [0, 0.11]),
+          lineHeight: 0.8,
           alignSelf: "flex-start",
-          marginBottom: -60,
+          marginBottom: -50,
+          transform: `translateY(${interpolate(quoteMarkProgress, [0, 1], [-40, 0])}px)`,
         }}
       >
-        "
+        &ldquo;
       </div>
 
-      {/* Quote text */}
+      {/* Words spring in */}
       <div
         style={{
-          fontSize: 64,
-          fontFamily: `${fontFamily}, Georgia, serif`,
-          fontStyle: "italic",
-          color,
-          textAlign: "center",
-          lineHeight: 1.4,
-          transform: `translateY(${quoteSlide}px)`,
+          display: "flex",
+          flexWrap: "wrap",
+          justifyContent: "center",
+          gap: "8px 16px",
           zIndex: 1,
         }}
       >
-        {scene.caption}
+        {words.map((word, i) => {
+          const delay = 6 + i * 3;
+          const wp = spring({
+            frame: Math.max(0, frame - delay),
+            fps,
+            config: { damping: 14, stiffness: 230, mass: 0.6 },
+          });
+          const isEmphasis = emphasisSet.has(word.toLowerCase().replace(/[^a-z]/g, ""));
+          return (
+            <span
+              key={i}
+              style={{
+                fontSize: isEmphasis ? 74 : 64,
+                fontFamily: `${fontFamily}, Georgia, serif`,
+                fontStyle: "italic",
+                fontWeight: isEmphasis ? 800 : 400,
+                color: isEmphasis ? highlightColor : color,
+                transform: `translateY(${interpolate(wp, [0, 1], [22, 0])}px)`,
+                opacity: wp,
+                display: "inline-block",
+                textShadow: isEmphasis ? `0 0 35px ${highlightColor}44` : "none",
+              }}
+            >
+              {word}
+            </span>
+          );
+        })}
       </div>
 
-      {/* Divider */}
+      {/* Divider + mood attribution */}
       <div
         style={{
-          width: 200,
-          height: 3,
-          background: accent ?? "#ffffff",
-          opacity: 0.4,
-          marginTop: 40,
-        }}
-      />
-
-      {/* Mood label */}
-      <div
-        style={{
-          marginTop: 24,
-          fontSize: 32,
-          fontFamily,
-          color: accent ?? "#ffffff",
-          opacity: 0.6,
-          letterSpacing: 6,
-          textTransform: "uppercase",
+          marginTop: 60,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 20,
+          opacity: attrOpacity,
+          transform: `translateY(${attrSlide}px)`,
         }}
       >
-        {scene.mood}
-      </div>
-
-      {/* Closing quote mark */}
-      <div
-        style={{
-          fontSize: 180,
-          fontFamily: "Georgia, serif",
-          color: accent ?? "#ffffff",
-          opacity: 0.15,
-          lineHeight: 1,
-          alignSelf: "flex-end",
-          marginTop: -60,
-        }}
-      >
-        "
+        <div
+          style={{
+            width: 110,
+            height: 2,
+            background: accent ?? "#ffffff",
+            opacity: 0.5,
+            boxShadow: `0 0 10px ${accent ?? "#ffffff"}55`,
+          }}
+        />
+        <div
+          style={{
+            fontSize: 28,
+            fontFamily,
+            color: accent ?? "#aaaaaa",
+            letterSpacing: 5,
+            textTransform: "uppercase",
+            opacity: 0.75,
+          }}
+        >
+          {scene.mood.toUpperCase()}
+        </div>
       </div>
     </div>
   );

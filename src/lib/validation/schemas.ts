@@ -184,6 +184,7 @@ export const RenderJobSchema = z.object({
   audioResults: z.array(AudioResultSchema),
   styleProfile: StyleProfileSchema,
   audioEnabled: z.boolean(),
+  musicUrl: z.string().nullable(),
   outputPath: z.string(),
   srtPath: z.string(),
   status: z.enum(["pending", "bundling", "rendering", "done", "error"]),
@@ -209,6 +210,7 @@ export const ShortFormVideoPropsSchema = z.object({
   captionEntries: z.array(CaptionEntrySchema),
   styleProfile: StyleProfileSchema,
   audioEnabled: z.boolean(),
+  musicUrl: z.string().nullable(),
   totalFrames: z.number(),
 });
 export type ShortFormVideoProps = z.infer<typeof ShortFormVideoPropsSchema>;
@@ -297,6 +299,7 @@ export const RenderRequestSchema = z.object({
   ),
   styleId: z.string(),
   audioEnabled: z.boolean(),
+  musicUrl: z.string().nullable().optional(),
 });
 export type RenderRequest = z.infer<typeof RenderRequestSchema>;
 

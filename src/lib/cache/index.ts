@@ -89,6 +89,9 @@ export class FileCache<T> {
   }
 }
 
+// Bump this when provider code or asset format changes — busts all stale cache entries
+export const CACHE_VERSION = "v4";
+
 const cacheDir = process.env.CACHE_DIR ?? "/tmp/sfv-cache";
 const ttl = Number(process.env.CACHE_TTL_HOURS ?? 24);
 
@@ -97,13 +100,13 @@ export const assetCache = new FileCache<unknown>(path.join(cacheDir, "visuals"),
 export const audioCache = new FileCache<unknown>(path.join(cacheDir, "audio"), ttl);
 
 export function planCacheKey(script: string, styleId: string): string {
-  return `plan::${script}::${styleId}`;
+  return `${CACHE_VERSION}::plan::${script}::${styleId}`;
 }
 
 export function assetCacheKey(searchTerms: string[], visualMode: string): string {
-  return `asset::${searchTerms.slice().sort().join(",")}::${visualMode}`;
+  return `${CACHE_VERSION}::asset::${searchTerms.slice().sort().join(",")}::${visualMode}`;
 }
 
 export function audioCacheKey(text: string, voiceId: string): string {
-  return `audio::${text}::${voiceId}`;
+  return `${CACHE_VERSION}::audio::${text}::${voiceId}`;
 }

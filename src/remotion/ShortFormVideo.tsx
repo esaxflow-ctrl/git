@@ -6,10 +6,18 @@ import {
   interpolate,
   Easing,
 } from "remotion";
-import { ShortFormVideoProps, VisualAsset, ScenePlan, StyleProfile } from "../lib/validation/schemas";
+import {
+  ShortFormVideoProps,
+  VisualAsset,
+  ScenePlan,
+  StyleProfile,
+} from "../lib/validation/schemas";
 import { VideoScene } from "./scenes/VideoScene";
 import { ImageScene } from "./scenes/ImageScene";
-import { MotionCardScene } from "./scenes/MotionCardScene";
+import { GradientMotionCardScene } from "./scenes/GradientMotionCardScene";
+import { TextCardScene } from "./scenes/TextCardScene";
+import { EvidenceCardScene } from "./scenes/EvidenceCardScene";
+import { TimelineCardScene } from "./scenes/TimelineCardScene";
 import { KineticTextScene } from "./scenes/KineticTextScene";
 import { QuoteCardScene } from "./scenes/QuoteCardScene";
 import { CaptionLayer } from "./captions/CaptionLayer";
@@ -28,12 +36,15 @@ function SceneContent({
       return <VideoScene asset={asset} motionStyle={style.motionStyle} />;
     case "stockImage":
       return <ImageScene asset={asset} motionStyle={style.motionStyle} />;
-    case "textCard":
     case "gradientMotionCard":
-    case "evidenceCard":
     case "mapCard":
+      return <GradientMotionCardScene scene={scene} style={style} />;
+    case "textCard":
+      return <TextCardScene scene={scene} style={style} />;
+    case "evidenceCard":
+      return <EvidenceCardScene scene={scene} style={style} />;
     case "timelineCard":
-      return <MotionCardScene asset={asset} style={style} />;
+      return <TimelineCardScene scene={scene} style={style} />;
     case "quoteCard":
       return <QuoteCardScene scene={scene} style={style} />;
     default:
@@ -47,7 +58,7 @@ function Vignette({ strength }: { strength: number }) {
       style={{
         position: "absolute",
         inset: 0,
-        background: `radial-gradient(ellipse at center, transparent 40%, rgba(0,0,0,${strength}) 100%)`,
+        background: `radial-gradient(ellipse at center, transparent 35%, rgba(0,0,0,${strength}) 100%)`,
         pointerEvents: "none",
         zIndex: 5,
       }}
@@ -72,7 +83,6 @@ function ColorTint({ tint }: { tint: string }) {
 
 function TransitionOverlay({
   transitionStyle,
-  durationInFrames,
 }: {
   transitionStyle: string;
   durationInFrames: number;
@@ -80,10 +90,9 @@ function TransitionOverlay({
   const frame = useCurrentFrame();
 
   if (transitionStyle === "fade") {
-    // Fade in at start
-    const opacity = interpolate(frame, [0, 10], [1, 0], {
+    const opacity = interpolate(frame, [0, 12], [1, 0], {
       extrapolateRight: "clamp",
-      easing: Easing.ease,
+      easing: Easing.out(Easing.ease),
     });
     return (
       <div
@@ -100,9 +109,9 @@ function TransitionOverlay({
   }
 
   if (transitionStyle === "glitch") {
-    if (frame > 5) return null;
-    const tx = interpolate(frame, [0, 3, 5], [20, -10, 0]);
-    const opacity = interpolate(frame, [0, 5], [0.8, 0]);
+    if (frame > 6) return null;
+    const tx = interpolate(frame, [0, 3, 6], [18, -9, 0]);
+    const opacity = interpolate(frame, [0, 6], [0.85, 0]);
     return (
       <div
         style={{
@@ -119,13 +128,11 @@ function TransitionOverlay({
   }
 
   if (transitionStyle === "zoom_through") {
-    if (frame > 8) return null;
-    const scale = interpolate(frame, [0, 8], [1.3, 1.0], {
+    if (frame > 9) return null;
+    const scale = interpolate(frame, [0, 9], [1.25, 1.0], {
       easing: Easing.out(Easing.ease),
     });
-    const opacity = interpolate(frame, [0, 8], [0, 1], {
-      extrapolateRight: "clamp",
-    });
+    const opacity = interpolate(frame, [0, 9], [0, 1], { extrapolateRight: "clamp" });
     return (
       <div
         style={{
@@ -141,16 +148,52 @@ function TransitionOverlay({
     );
   }
 
-  return null;
+  // "cut" and "wipe" — just a very fast 4-frame fade on cut
+  if (frame > 4) return null;
+  const opacity = interpolate(frame, [0, 4], [0.6, 0]);
+  return (
+    <div
+      style={{
+        position: "absolute",
+        inset: 0,
+        background: "black",
+        opacity,
+        zIndex: 20,
+        pointerEvents: "none",
+      }}
+    />
+  );
 }
 
 export function ShortFormVideo(props: ShortFormVideoProps) {
-  const { scenesWithTiming, scenes, resolvedAssets, audioResults, captionEntries, styleProfile, audioEnabled } = props;
+  const {
+    scenesWithTiming,
+    scenes,
+    resolvedAssets,
+    audioResults,
+    captionEntries,
+    styleProfile,
+    audioEnabled,
+    musicUrl,
+  } = props;
   const { colorStrategy, transitionStyle } = styleProfile;
-  const vignette = colorStrategy.vignetteStrength ?? 0.5;
+  const vignette = colorStrategy.vignetteStrength ?? 0.55;
 
   return (
-    <div style={{ width: "100%", height: "100%", position: "relative", overflow: "hidden", background: "#000" }}>
+    <div
+      style={{
+        width: "100%",
+        height: "100%",
+        position: "relative",
+        overflow: "hidden",
+        background: "#000",
+      }}
+    >
+      {/* Background music — low volume ambient track under narration */}
+      {audioEnabled && musicUrl && (
+        <Audio src={musicUrl} volume={0.14} />
+      )}
+
       {scenesWithTiming.map((sceneWithTiming, i) => {
         const scene = scenes[i];
         const asset = resolvedAssets[i];
@@ -177,16 +220,23 @@ export function ShortFormVideo(props: ShortFormVideoProps) {
               durationInFrames={sceneWithTiming.durationFrames}
             />
 
-            {/* Audio */}
+            {/* Per-scene narration audio */}
             {audioEnabled && audio?.path && audio.provider !== "silent" && (
-              <Audio src={audio.path} />
+              <Audio src={audio.path} volume={1.0} />
             )}
           </Sequence>
         );
       })}
 
       {/* Caption layer — always on top across all scenes */}
-      <div style={{ position: "absolute", inset: 0, zIndex: 15, pointerEvents: "none" }}>
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 15,
+          pointerEvents: "none",
+        }}
+      >
         <CaptionLayer captionEntries={captionEntries} style={styleProfile} />
       </div>
     </div>

@@ -56,6 +56,7 @@ export function buildInputProps(job: RenderJob): ShortFormVideoProps {
     captionEntries,
     styleProfile: job.styleProfile,
     audioEnabled: job.audioEnabled,
+    musicUrl: job.musicUrl ?? null,
     totalFrames,
   };
 }

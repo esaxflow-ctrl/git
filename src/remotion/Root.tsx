@@ -44,6 +44,7 @@ function RemotionRoot() {
       },
     },
     audioEnabled: false,
+    musicUrl: null,
     totalFrames: 30 * 67,
   };
 

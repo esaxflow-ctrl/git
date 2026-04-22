@@ -7,6 +7,11 @@ interface Props {
   compositionOffsetMs?: number;
 }
 
+// 9:16 safe zone: keep captions between 15% and 80% of height
+// Top 15% = status bar / notch; Bottom 20% = home indicator / nav UI
+const SAFE_TOP_PX = 288;   // 15% of 1920
+const SAFE_BOTTOM_PX = 320; // ~17% from bottom of 1920
+
 export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }: Props) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -19,57 +24,47 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
 
   if (!active) return null;
 
-  // Non-null assertion — we checked above; inner functions need a stable non-optional reference
   const activeEntry = active;
 
-  const { captionStyle, colorStrategy } = style;
-  const {
-    fontFamily,
-    fontSize,
-    color,
-    highlightColor,
-    animation,
-    position,
-  } = captionStyle;
+  const { captionStyle } = style;
+  const { fontFamily, fontSize, color, highlightColor, animation, position, maxWordsPerGroup } = captionStyle;
 
   const entryProgress = (currentMs - activeEntry.startMs) / (activeEntry.endMs - activeEntry.startMs);
 
+  // Safe zone positioning
   const positionStyle: React.CSSProperties =
-    position === "bottom"
-      ? { bottom: 120 }
-      : position === "top"
-      ? { top: 120 }
-      : { top: "50%", transform: "translateY(-50%)" };
+    position === "top"
+      ? { top: SAFE_TOP_PX }
+      : position === "center"
+      ? { top: "50%", transform: "translateY(-50%)" }
+      : { bottom: SAFE_BOTTOM_PX }; // "bottom" default
 
   const words = activeEntry.text.split(" ");
   const emphasisSet = new Set(activeEntry.emphasisWords.map((w) => w.toLowerCase()));
 
   function renderWordPop() {
     return (
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 8 }}>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "6px 10px" }}>
         {words.map((word, i) => {
           const clean = word.toLowerCase().replace(/[^a-z]/g, "");
           const isEmphasis = emphasisSet.has(clean);
-          const wordProgress = spring({
-            frame: Math.max(0, frame),
+          const wp = spring({
+            frame: Math.max(0, frame - i * 2),
             fps,
-            config: { damping: 15, stiffness: 300, mass: 0.5 },
+            config: { damping: 15, stiffness: 320, mass: 0.45 },
           });
-          const scale = isEmphasis
-            ? interpolate(wordProgress, [0, 1], [0.8, 1.15])
-            : 1;
-
           return (
             <span
               key={i}
               style={{
-                fontSize: isEmphasis ? fontSize * 1.15 : fontSize,
+                fontSize: isEmphasis ? fontSize * 1.18 : fontSize,
                 fontFamily,
-                fontWeight: isEmphasis ? 900 : 700,
+                fontWeight: isEmphasis ? 900 : 800,
                 color: isEmphasis ? highlightColor : color,
-                transform: `scale(${scale})`,
+                transform: `scale(${interpolate(wp, [0, 1], [0.7, isEmphasis ? 1.12 : 1.0])})`,
                 display: "inline-block",
-                textShadow: "0 2px 8px rgba(0,0,0,0.8)",
+                textShadow: "0 3px 12px rgba(0,0,0,0.9)",
+                WebkitTextStroke: "1px rgba(0,0,0,0.3)",
               }}
             >
               {word}
@@ -81,12 +76,8 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
   }
 
   function renderPhraseSlide() {
-    const slideY = interpolate(frame, [0, 8], [30, 0], {
-      extrapolateRight: "clamp",
-    });
-    const opacity = interpolate(frame, [0, 6], [0, 1], {
-      extrapolateRight: "clamp",
-    });
+    const slideY = interpolate(frame, [0, 10], [24, 0], { extrapolateRight: "clamp" });
+    const opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: "clamp" });
     return (
       <div
         style={{
@@ -94,11 +85,12 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
           opacity,
           fontSize,
           fontFamily,
-          fontWeight: 700,
+          fontWeight: 800,
           color,
           textAlign: "center",
-          textShadow: "0 2px 12px rgba(0,0,0,0.9)",
-          lineHeight: 1.3,
+          textShadow: "0 3px 14px rgba(0,0,0,0.95)",
+          lineHeight: 1.25,
+          WebkitTextStroke: "1px rgba(0,0,0,0.25)",
         }}
       >
         {activeEntry.text}
@@ -113,9 +105,9 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
         style={{
           fontSize,
           fontFamily,
-          fontWeight: 700,
+          fontWeight: 800,
           textAlign: "center",
-          lineHeight: 1.3,
+          lineHeight: 1.25,
         }}
       >
         {activeEntry.text.split("").map((char, i) => (
@@ -125,9 +117,8 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
               color: i <= charProgress ? highlightColor : color,
               textShadow:
                 i <= charProgress
-                  ? `0 0 20px ${highlightColor}66`
-                  : "0 2px 8px rgba(0,0,0,0.8)",
-              transition: "color 0.1s",
+                  ? `0 0 22px ${highlightColor}77, 0 2px 8px rgba(0,0,0,0.9)`
+                  : "0 2px 8px rgba(0,0,0,0.85)",
             }}
           >
             {char}
@@ -144,15 +135,15 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
         style={{
           fontSize,
           fontFamily,
-          fontWeight: 700,
+          fontWeight: 800,
           color,
           textAlign: "center",
-          textShadow: "0 2px 8px rgba(0,0,0,0.8)",
-          lineHeight: 1.3,
+          textShadow: "0 2px 10px rgba(0,0,0,0.9)",
+          lineHeight: 1.25,
         }}
       >
         {activeEntry.text.slice(0, charCount)}
-        <span style={{ opacity: Math.round(frame % 30 / 15) }}>|</span>
+        <span style={{ opacity: Math.round((frame % 28) / 14) }}>|</span>
       </div>
     );
   }
@@ -173,8 +164,6 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
       content = renderPhraseSlide();
   }
 
-  const tint = colorStrategy.tint ?? "rgba(0,0,0,0.45)";
-
   return (
     <div
       style={{
@@ -182,7 +171,7 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
         left: 0,
         right: 0,
         ...positionStyle,
-        padding: "0 40px",
+        padding: "0 48px",
         zIndex: 10,
         display: "flex",
         justifyContent: "center",
@@ -190,11 +179,12 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
     >
       <div
         style={{
-          background: tint,
-          borderRadius: 16,
-          padding: "16px 28px",
-          maxWidth: "90%",
-          backdropFilter: "blur(4px)",
+          background: "rgba(0,0,0,0.52)",
+          borderRadius: 18,
+          padding: "18px 32px",
+          maxWidth: "88%",
+          backdropFilter: "blur(6px)",
+          border: "1px solid rgba(255,255,255,0.07)",
         }}
       >
         {content}

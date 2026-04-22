@@ -7,6 +7,7 @@ import { renderVideo, buildInputProps } from "../render/remotionRender";
 import { synthesizeScenes } from "../../lib/tts";
 import { exportSRT } from "../../lib/captions/srt";
 import { buildCaptionEntries } from "../../lib/captions";
+import { resolveBackgroundMusic } from "../../lib/music";
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR ?? "/tmp/sfv-output";
 
@@ -26,7 +27,7 @@ renderRouter.post("/", async (req, res) => {
     return;
   }
 
-  const { scenes, resolvedAssets, audioResults: clientAudioResults, styleId, audioEnabled } = parse.data;
+  const { scenes, resolvedAssets, audioResults: clientAudioResults, styleId, audioEnabled, musicUrl: clientMusicUrl } = parse.data;
 
   let styleProfile;
   try {
@@ -64,6 +65,10 @@ renderRouter.post("/", async (req, res) => {
     }));
   }
 
+  // Resolve background music (non-blocking, optional)
+  const primaryMood = scenes[0]?.mood ?? "cinematic";
+  const musicUrl = clientMusicUrl ?? await resolveBackgroundMusic(primaryMood).catch(() => null);
+
   const job: RenderJob = {
     jobId,
     scenes,
@@ -71,6 +76,7 @@ renderRouter.post("/", async (req, res) => {
     audioResults,
     styleProfile,
     audioEnabled,
+    musicUrl: musicUrl ?? null,
     outputPath,
     srtPath,
     status: "pending",
