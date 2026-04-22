@@ -191,7 +191,14 @@ export function ShortFormVideo(props: ShortFormVideoProps) {
     >
       {/* Background music — low volume ambient track under narration */}
       {audioEnabled && musicUrl && (
-        <Audio src={musicUrl} volume={0.14} />
+        <Audio
+          src={
+            musicUrl.startsWith("file://") || musicUrl.startsWith("http")
+              ? musicUrl
+              : `file://${musicUrl}`
+          }
+          volume={0.14}
+        />
       )}
 
       {scenesWithTiming.map((sceneWithTiming, i) => {
@@ -220,9 +227,16 @@ export function ShortFormVideo(props: ShortFormVideoProps) {
               durationInFrames={sceneWithTiming.durationFrames}
             />
 
-            {/* Per-scene narration audio */}
+            {/* Per-scene narration audio — convert absolute paths to file:// URLs */}
             {audioEnabled && audio?.path && audio.provider !== "silent" && (
-              <Audio src={audio.path} volume={1.0} />
+              <Audio
+                src={
+                  audio.path.startsWith("file://") || audio.path.startsWith("http")
+                    ? audio.path
+                    : `file://${audio.path}`
+                }
+                volume={1.0}
+              />
             )}
           </Sequence>
         );
