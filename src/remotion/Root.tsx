@@ -1,8 +1,8 @@
-import { Composition } from "remotion";
+import { Composition, registerRoot } from "remotion";
 import { ShortFormVideo } from "./ShortFormVideo";
 import { ShortFormVideoProps } from "../lib/validation/schemas";
 
-export function RemotionRoot() {
+function RemotionRoot() {
   const defaultProps: ShortFormVideoProps = {
     scenes: [],
     scenesWithTiming: [],
@@ -62,3 +62,5 @@ export function RemotionRoot() {
     />
   );
 }
+
+registerRoot(RemotionRoot);
