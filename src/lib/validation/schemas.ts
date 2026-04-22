@@ -26,6 +26,15 @@ export const VisualRoleSchema = z.enum([
 ]);
 export type VisualRole = z.infer<typeof VisualRoleSchema>;
 
+export const VisualPurposeSchema = z.enum([
+  "show_behavior",
+  "show_emotion",
+  "show_consequence",
+  "show_reframe",
+  "show_action",
+]);
+export type VisualPurpose = z.infer<typeof VisualPurposeSchema>;
+
 export const CaptionAnimationSchema = z.enum([
   "word_pop",
   "phrase_slide",
@@ -82,6 +91,8 @@ export const ScenePlanSchema = z.object({
   visualRole: VisualRoleSchema,
   pacing: PacingModeSchema,
   durationHint: z.number().min(3).max(20),
+  visualPurpose: VisualPurposeSchema.optional(),
+  cinematicPrompt: z.string().optional(),
 });
 export type ScenePlan = z.infer<typeof ScenePlanSchema>;
 
