@@ -237,7 +237,7 @@ export type PlanRequest = z.infer<typeof PlanRequestSchema>;
 export const PlanResponseSchema = z.object({
   scenes: z.array(ScenePlanSchema),
   warnings: z.array(z.string()),
-  provider: z.enum(["ollama", "openrouter", "deterministic"]),
+  provider: z.enum(["ollama", "openrouter", "deterministic", "cached"]),
   cached: z.boolean(),
 });
 export type PlanResponse = z.infer<typeof PlanResponseSchema>;
