@@ -53,7 +53,7 @@ export function ScriptInput({ onGenerate, loading }: Props) {
       <textarea
         value={script}
         onChange={(e) => setScript(e.target.value)}
-        placeholder="Paste your script here... (min 50 characters)"
+        placeholder="Paste your script here… (50 min, up to 5000 · aim for ~800 chars / 150 words for a 60-second video)"
         style={{
           width: "100%",
           minHeight: 200,
@@ -112,7 +112,9 @@ export function ScriptInput({ onGenerate, loading }: Props) {
       </div>
 
       <div style={{ fontSize: 12, color: "#4b5563" }}>
-        {wordCount} words · ~{Math.round((wordCount / 150) * 60)}s estimated
+        {script.length} chars · {wordCount} words · ~{Math.round((wordCount / 150) * 60)}s estimated
+        {wordCount > 0 && wordCount < 80 && " · (add more for a 60s video)"}
+        {wordCount >= 80 && wordCount <= 180 && " · ✓ good length"}
       </div>
     </div>
   );
