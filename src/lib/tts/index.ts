@@ -2,8 +2,9 @@ import { AudioResult, VoiceOptions, ScenePlan } from "../validation/schemas";
 import { audioCache, audioCacheKey } from "../cache";
 import { isKokoroAvailable, synthesizeWithKokoro } from "./kokoro";
 import { isPiperAvailable, synthesizeWithPiper } from "./piper";
+import { isMacosSayAvailable, synthesizeWithMacosSay } from "./macos";
 
-export type TtsProvider = "kokoro" | "piper" | "silent";
+export type TtsProvider = "kokoro" | "piper" | "macos_say" | "silent";
 
 export interface TtsResult {
   audioResults: AudioResult[];
@@ -39,8 +40,11 @@ async function synthesizeOne(
     case "piper":
       result = await synthesizeWithPiper(text, options);
       break;
+    case "macos_say":
+      result = await synthesizeWithMacosSay(text);
+      break;
     default:
-      result = SILENT_RESULT;
+      result = { ...SILENT_RESULT, durationMs: estimateSilentDuration(text) };
   }
 
   await audioCache.set(cacheKey, result);
@@ -62,6 +66,8 @@ export async function synthesizeScenes(
     provider = "kokoro";
   } else if (isPiperAvailable()) {
     provider = "piper";
+  } else if (isMacosSayAvailable()) {
+    provider = "macos_say";
   }
 
   console.info(`[tts] Using provider: ${provider}`);
