@@ -26,6 +26,11 @@ export function estimateWordTimings(
   return timings;
 }
 
+// Minimum time a caption must remain on screen (ms) for readability
+const MIN_CAPTION_DURATION_MS = 800;
+// Max words to prevent 3+ line wrap on a 9:16 portrait composition
+const MAX_WORDS_CAP = 5;
+
 export function groupWordTimings(
   wordTimings: WordTiming[],
   maxWordsPerGroup: number,
@@ -34,6 +39,8 @@ export function groupWordTimings(
   if (wordTimings.length === 0) return [];
 
   const emphasisSet = new Set(emphasisWords.map((w) => w.toLowerCase()));
+  // Enforce hard cap to prevent 3-line overflow
+  const effectiveMax = Math.min(maxWordsPerGroup, MAX_WORDS_CAP);
   const entries: CaptionEntry[] = [];
   let i = 0;
 
@@ -41,12 +48,10 @@ export function groupWordTimings(
     const group: WordTiming[] = [];
     let breakAt = i;
 
-    // Collect up to maxWordsPerGroup words, breaking at natural punctuation
-    while (group.length < maxWordsPerGroup && breakAt < wordTimings.length) {
+    while (group.length < effectiveMax && breakAt < wordTimings.length) {
       group.push(wordTimings[breakAt]);
       breakAt++;
 
-      // Natural break points
       const wordRaw = wordTimings[breakAt - 1].word;
       if (wordRaw && /[.!?,;]$/.test(wordRaw) && group.length >= 2) {
         break;
@@ -60,10 +65,15 @@ export function groupWordTimings(
 
     const hasEmphasis = entryEmphasis.length > 0;
 
+    const startMs = group[0].startMs;
+    // Guarantee minimum on-screen duration
+    const rawEndMs = group[group.length - 1].endMs;
+    const endMs = Math.max(rawEndMs, startMs + MIN_CAPTION_DURATION_MS);
+
     entries.push({
       text,
-      startMs: group[0].startMs,
-      endMs: group[group.length - 1].endMs,
+      startMs,
+      endMs,
       emphasisWords: entryEmphasis,
       style: hasEmphasis ? "emphasis" : "normal",
     });

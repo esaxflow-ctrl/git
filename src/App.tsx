@@ -1,15 +1,17 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 import {
   ScenePlan,
   VisualAsset,
   AudioResult,
   RenderStatus,
 } from "./lib/validation/schemas";
-import { api } from "./api/client";
+import { api, QualityReport } from "./api/client";
 import { ScriptInput } from "./components/ScriptInput";
 import { ScenePlanEditor } from "./components/ScenePlanEditor";
 import { RenderControls } from "./components/RenderControls";
 import { DownloadPanel } from "./components/DownloadPanel";
+import { StoryboardPanel } from "./components/StoryboardPanel";
+import { QualityGatePanel } from "./components/QualityGatePanel";
 
 type AppStep = "idle" | "planning" | "editing" | "resolving" | "synthesizing" | "rendering" | "done" | "error";
 
@@ -25,10 +27,13 @@ interface State {
   audioEnabled: boolean;
   visualsResolved: boolean;
   audioSynthesized: boolean;
+  audioProvider: string;
   renderJobId: string | null;
   renderStatus: RenderStatus | null;
   error: string | null;
   providerInfo: { planner?: string; visuals?: string[]; tts?: string };
+  qualityReport: QualityReport | null;
+  qualityLoading: boolean;
 }
 
 const INITIAL: State = {
@@ -43,10 +48,13 @@ const INITIAL: State = {
   audioEnabled: false,
   visualsResolved: false,
   audioSynthesized: false,
+  audioProvider: "",
   renderJobId: null,
   renderStatus: null,
   error: null,
   providerInfo: {},
+  qualityReport: null,
+  qualityLoading: false,
 };
 
 export default function App() {
@@ -108,12 +116,12 @@ export default function App() {
       const { audioResults, provider } = await api.tts.synthesize({
         scenes: state.scenes,
       });
-      // audioResults from server don't have paths (stripped server-side)
       const results = audioResults.map((a) => ({ ...a, path: "" })) as AudioResult[];
       patch({
         step: "editing",
         audioResults: results,
         audioSynthesized: true,
+        audioProvider: provider,
         providerInfo: { ...state.providerInfo, tts: provider },
       });
     } catch (err) {
@@ -144,6 +152,21 @@ export default function App() {
       patch({ step: "error", error: String(err) });
     }
   }, [state]);
+
+  // Auto-run quality analysis whenever visuals or audio change
+  useEffect(() => {
+    if (!state.visualsResolved) return;
+    patch({ qualityLoading: true });
+    api.analyze
+      .quality({
+        scenes: state.scenes,
+        resolvedAssets: state.resolvedAssets.length > 0 ? state.resolvedAssets : undefined,
+        audioResults: state.audioSynthesized ? state.audioResults : undefined,
+      })
+      .then((report) => patch({ qualityReport: report, qualityLoading: false }))
+      .catch(() => patch({ qualityLoading: false }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.visualsResolved, state.audioSynthesized]);
 
   const isPlanning = state.step === "planning";
   const isEditing = ["editing", "resolving", "synthesizing"].includes(state.step);
@@ -211,10 +234,27 @@ export default function App() {
               scenes={state.scenes}
               warnings={state.warnings}
               provider={state.planProvider}
+              resolvedAssets={state.resolvedAssets}
               onScenesChange={(scenes) => patch({ scenes })}
               onRegenerate={handleRegenerate}
               loading={isPlanning}
             />
+          </>
+        )}
+
+        {/* Storyboard preview — shown once visuals are resolved */}
+        {state.visualsResolved && state.resolvedAssets.length > 0 && (
+          <>
+            <Divider />
+            <StoryboardPanel scenes={state.scenes} resolvedAssets={state.resolvedAssets} />
+          </>
+        )}
+
+        {/* Quality gate — shown once visuals are resolved */}
+        {state.visualsResolved && (
+          <>
+            <Divider />
+            <QualityGatePanel report={state.qualityReport} loading={state.qualityLoading} />
           </>
         )}
 
@@ -226,6 +266,7 @@ export default function App() {
               step={renderControlStep}
               renderStatus={state.renderStatus}
               audioEnabled={state.audioEnabled}
+              audioProvider={state.audioProvider}
               providerInfo={state.providerInfo}
               onToggleAudio={() => patch({ audioEnabled: !state.audioEnabled, audioSynthesized: false })}
               onResolveVisuals={handleResolveVisuals}

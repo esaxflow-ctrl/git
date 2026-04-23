@@ -68,22 +68,52 @@ async function openverseSearch(query: string): Promise<OpenverseImage[]> {
   return data.results ?? [];
 }
 
+// Score an image result for portrait suitability (higher = better for 9:16)
+function qualityScore(img: OpenverseImage): number {
+  let s = 0;
+  const w = img.width || 0;
+  const h = img.height || 0;
+
+  // Portrait orientation strongly preferred
+  if (h > w) s += 4;
+  else if (h === w) s += 1;
+  // else landscape: 0
+
+  // Minimum resolution threshold
+  const minDim = Math.min(w, h);
+  if (minDim >= 800) s += 3;
+  else if (minDim >= 400) s += 1;
+  else if (minDim === 0) s -= 2; // unknown dimensions, lower confidence
+
+  // Prefer images with known creator attribution
+  if (img.creator && img.creator !== "unknown") s += 1;
+
+  return s;
+}
+
 export async function fetchFromOpenverse(scene: ScenePlan): Promise<VisualAsset> {
   const hash = sceneHash(scene);
 
-  // Try each search term, then mood as last-resort
+  // Try each search term, then progressively simpler fallbacks
   const queries = [
     ...scene.searchTerms.map(extractKeywords).filter((q) => q.length > 0),
+    // Simplified fallback: just the first 2 keywords without shot descriptors
+    scene.searchTerms[0]
+      ? extractKeywords(scene.searchTerms[0]).split(" ").slice(0, 2).join(" ")
+      : "",
     scene.mood ?? "contemplative",
-  ];
+  ].filter((q) => q.length >= 2);
 
   for (const query of queries) {
     try {
       const results = await openverseSearch(query);
       if (results.length === 0) continue;
 
-      const idx = deterministicIndex(hash + query, results.length);
-      const img = results[idx];
+      // Rank by portrait quality, pick deterministically from top-half
+      const ranked = [...results].sort((a, b) => qualityScore(b) - qualityScore(a));
+      const topHalf = ranked.slice(0, Math.max(1, Math.ceil(ranked.length / 2)));
+      const idx = deterministicIndex(hash + query, topHalf.length);
+      const img = topHalf[idx];
 
       return {
         type: "stockImage",

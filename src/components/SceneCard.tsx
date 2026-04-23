@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ScenePlan, VisualMode, PacingMode } from "../lib/validation/schemas";
+import { ScenePlan, VisualMode, PacingMode, VisualAsset } from "../lib/validation/schemas";
+import { scoreSearchTerms } from "../lib/validation/antiGeneric";
 
 const VISUAL_MODES: VisualMode[] = [
   "stockVideo", "stockImage", "gradientMotionCard", "textCard",
@@ -19,6 +20,106 @@ const MODE_ICONS: Record<VisualMode, string> = {
   timelineCard: "⧖",
 };
 
+function DebugPanel({ scene, resolvedAsset }: { scene: ScenePlan; resolvedAsset?: VisualAsset }) {
+  const { avgScore, scores, weak } = scoreSearchTerms(scene.searchTerms);
+  const panelStyle: React.CSSProperties = {
+    background: "#060a12",
+    border: "1px solid #111827",
+    borderRadius: 8,
+    padding: "12px 14px",
+    fontSize: 11,
+    display: "flex",
+    flexDirection: "column",
+    gap: 8,
+    color: "#6b7280",
+  };
+  const rowStyle: React.CSSProperties = { display: "flex", gap: 8, flexWrap: "wrap" };
+  return (
+    <div style={panelStyle}>
+      <div style={{ color: "#374151", fontWeight: 700, fontSize: 12 }}>Debug telemetry</div>
+
+      {/* Visual selection reasoning */}
+      {scene.visualPurpose && (
+        <div>
+          <span style={{ color: "#4b5563" }}>Purpose: </span>
+          <span style={{ color: "#9ca3af" }}>{scene.visualPurpose.replace(/_/g, " ")}</span>
+        </div>
+      )}
+      {scene.sceneGoal && (
+        <div>
+          <span style={{ color: "#4b5563" }}>Goal: </span>
+          <span style={{ color: "#9ca3af", fontStyle: "italic" }}>{scene.sceneGoal}</span>
+        </div>
+      )}
+      {scene.cinematicPrompt && (
+        <div>
+          <span style={{ color: "#4b5563" }}>Cinematic prompt: </span>
+          <span style={{ color: "#9ca3af" }}>{scene.cinematicPrompt}</span>
+        </div>
+      )}
+
+      {/* Search term scores */}
+      <div>
+        <div style={{ color: "#4b5563", marginBottom: 4 }}>
+          Search terms (avg score {avgScore.toFixed(1)}/10
+          {weak.length > 0 && <span style={{ color: "#f97316" }}> — {weak.length} weak</span>}
+          ):
+        </div>
+        <div style={rowStyle}>
+          {scores.map((s) => (
+            <span
+              key={s.term}
+              title={s.reason}
+            style={{
+                background: s.score <= 2 ? "#1c0800" : s.score >= 6 ? "#071f0a" : "#0a0f1a",
+                border: `1px solid ${s.score <= 2 ? "#92400e" : s.score >= 6 ? "#14532d" : "#1f2937"}`,
+                borderRadius: 4,
+                padding: "2px 7px",
+                color: s.score <= 2 ? "#f97316" : s.score >= 6 ? "#4ade80" : "#9ca3af",
+              }}
+            >
+              {s.term} <span style={{ opacity: 0.5 }}>{s.score}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
+      {/* Resolved asset info */}
+      {resolvedAsset && (
+        <div>
+          <div style={{ color: "#4b5563", marginBottom: 4 }}>Resolved asset:</div>
+          <div style={rowStyle}>
+            <span style={{ color: "#9ca3af" }}>provider: <b>{resolvedAsset.provider}</b></span>
+            <span style={{ color: "#9ca3af" }}>type: <b>{resolvedAsset.type}</b></span>
+            {resolvedAsset.metadata.width > 0 && (
+              <span style={{ color: "#9ca3af" }}>
+                {resolvedAsset.metadata.width}×{resolvedAsset.metadata.height}
+              </span>
+            )}
+          </div>
+          {resolvedAsset.metadata.attribution && (
+            <div style={{ color: "#374151", marginTop: 4, fontStyle: "italic" }}>
+              {resolvedAsset.metadata.attribution}
+            </div>
+          )}
+          {resolvedAsset.url && (
+            <div
+              style={{
+                marginTop: 4,
+                color: "#1d4ed8",
+                wordBreak: "break-all",
+                fontSize: 10,
+              }}
+            >
+              {resolvedAsset.url.slice(0, 80)}{resolvedAsset.url.length > 80 ? "…" : ""}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const PACING_COLORS: Record<PacingMode, string> = {
   fast: "#ef4444",
   medium: "#f59e0b",
@@ -30,10 +131,12 @@ interface Props {
   scene: ScenePlan;
   index: number;
   onChange: (updated: ScenePlan) => void;
+  resolvedAsset?: VisualAsset;
 }
 
-export function SceneCard({ scene, index, onChange }: Props) {
+export function SceneCard({ scene, index, onChange, resolvedAsset }: Props) {
   const [expanded, setExpanded] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
 
   function update(partial: Partial<ScenePlan>) {
     onChange({ ...scene, ...partial });
@@ -168,7 +271,7 @@ export function SceneCard({ scene, index, onChange }: Props) {
             />
           </label>
 
-          <div style={{ display: "flex", gap: 10 }}>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
             <div style={{ fontSize: 12, color: "#4b5563" }}>
               Role: <span style={{ color: "#6b7280" }}>{scene.visualRole}</span>
             </div>
@@ -178,7 +281,24 @@ export function SceneCard({ scene, index, onChange }: Props) {
             <div style={{ fontSize: 12, color: "#4b5563" }}>
               ~{scene.durationHint}s
             </div>
+            <button
+              onClick={() => setShowDebug(!showDebug)}
+              style={{
+                fontSize: 11,
+                color: showDebug ? "#60a5fa" : "#374151",
+                background: "none",
+                border: "1px solid " + (showDebug ? "#1d4ed8" : "#1f2937"),
+                borderRadius: 4,
+                padding: "2px 8px",
+                cursor: "pointer",
+                marginLeft: "auto",
+              }}
+            >
+              {showDebug ? "hide debug" : "why this visual?"}
+            </button>
           </div>
+
+          {showDebug && <DebugPanel scene={scene} resolvedAsset={resolvedAsset} />}
         </div>
       )}
     </div>

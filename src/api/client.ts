@@ -15,8 +15,26 @@ import {
   RenderStatusSchema,
   StyleProfile,
   StyleProfileSchema,
+  ScenePlan,
+  VisualAsset,
+  AudioResult,
 } from "../lib/validation/schemas";
 import { z } from "zod";
+
+const QualityReportSchema = z.object({
+  overallScore: z.number(),
+  dimensions: z.object({
+    visualDiversity: z.number(),
+    searchTermQuality: z.number(),
+    pacingVariety: z.number(),
+    captionCoverage: z.number(),
+    audioReadiness: z.number(),
+  }),
+  warnings: z.array(z.string()),
+  blockers: z.array(z.string()),
+  grade: z.enum(["A", "B", "C", "D", "F"]),
+});
+export type QualityReport = z.infer<typeof QualityReportSchema>;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const BASE = ((import.meta as any).env?.VITE_API_BASE as string | undefined) ?? "/api";
@@ -102,5 +120,13 @@ export const api = {
 
     downloadUrl: (jobId: string) => `${BASE}/download/${jobId}`,
     srtUrl: (jobId: string) => `${BASE}/download/${jobId}/srt`,
+  },
+
+  analyze: {
+    quality: (body: {
+      scenes: ScenePlan[];
+      resolvedAssets?: VisualAsset[];
+      audioResults?: Partial<AudioResult>[];
+    }) => post<QualityReport>("/analyze", body, QualityReportSchema),
   },
 };

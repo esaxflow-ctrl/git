@@ -13,6 +13,68 @@ const GENERIC_TERM_BLOCKLIST = new Set([
   "tree", "flower", "animal", "dog", "cat", "bird",
 ]);
 
+// Shot/camera descriptor words that add no semantic content on their own
+const SHOT_DESCRIPTOR_WORDS = new Set([
+  "close", "up", "extreme", "wide", "shot", "medium", "overhead", "angle",
+  "view", "cinematic", "moody", "dramatic", "editorial", "style", "warm",
+  "cool", "lighting", "composition", "framing", "natural", "candid",
+  "tracking", "follow", "portrait", "landscape", "aerial", "establishing",
+]);
+
+export interface TermScore {
+  term: string;
+  score: number; // 0–10
+  reason: string;
+}
+
+// Score a single search term for specificity. Returns 0–10.
+function scoreSingleTerm(term: string): TermScore {
+  const words = term.trim().split(/\s+/);
+  let score = 0;
+  const reasons: string[] = [];
+
+  // Reward multi-word phrases
+  if (words.length >= 5) { score += 4; reasons.push("long specific phrase"); }
+  else if (words.length >= 3) { score += 3; reasons.push("multi-word phrase"); }
+  else if (words.length === 2) { score += 2; reasons.push("two-word term"); }
+  else { score += 1; reasons.push("single word"); }
+
+  // Penalise generic words in the phrase
+  const genericCount = words.filter((w) => GENERIC_TERM_BLOCKLIST.has(w.toLowerCase())).length;
+  if (genericCount > 0) {
+    score -= genericCount * 2;
+    reasons.push(`${genericCount} generic word(s)`);
+  }
+
+  // Penalise phrases that are only shot descriptors
+  const contentWords = words.filter(
+    (w) => !SHOT_DESCRIPTOR_WORDS.has(w.toLowerCase()) && !GENERIC_TERM_BLOCKLIST.has(w.toLowerCase())
+  );
+  if (contentWords.length === 0) {
+    score -= 4;
+    reasons.push("no content words (only shot descriptors)");
+  } else if (contentWords.length < words.length / 2) {
+    score -= 2;
+    reasons.push("mostly shot descriptors");
+  }
+
+  // Reward concrete nouns (heuristic: capitalised mid-phrase, or known concrete words)
+  if (/[A-Z]/.test(term.slice(1))) {
+    score += 1;
+    reasons.push("contains proper noun");
+  }
+
+  const finalScore = Math.max(0, Math.min(10, score));
+  return { term, score: finalScore, reason: reasons.join("; ") };
+}
+
+export function scoreSearchTerms(terms: string[]): { avgScore: number; scores: TermScore[]; weak: string[] } {
+  const scores = terms.map(scoreSingleTerm);
+  const weak = scores.filter((s) => s.score <= 2).map((s) => s.term);
+  const avgScore = scores.reduce((sum, s) => sum + s.score, 0) / (scores.length || 1);
+  return { avgScore, scores, weak };
+}
+
 export interface ValidationResult {
   valid: boolean;
   reason?: string;

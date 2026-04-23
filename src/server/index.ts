@@ -8,6 +8,7 @@ import { assetsRouter } from "./routes/assets";
 import { ttsRouter } from "./routes/tts";
 import { renderRouter } from "./routes/render";
 import { downloadRouter } from "./routes/download";
+import { analyzeRouter } from "./routes/analyze";
 import { planCache, assetCache, audioCache } from "../lib/cache";
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -25,6 +26,7 @@ app.use("/api", assetsRouter);
 app.use("/api", ttsRouter);
 app.use("/api/render", renderRouter);
 app.use("/api/download", downloadRouter);
+app.use("/api", analyzeRouter);
 
 // Serve built frontend in production
 const clientDist = path.join(process.cwd(), "dist", "client");

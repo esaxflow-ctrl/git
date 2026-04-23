@@ -1,10 +1,11 @@
-import { ScenePlan } from "../lib/validation/schemas";
+import { ScenePlan, VisualAsset } from "../lib/validation/schemas";
 import { SceneCard } from "./SceneCard";
 
 interface Props {
   scenes: ScenePlan[];
   warnings: string[];
   provider: string;
+  resolvedAssets?: VisualAsset[];
   onScenesChange: (scenes: ScenePlan[]) => void;
   onRegenerate: () => void;
   loading: boolean;
@@ -14,6 +15,7 @@ export function ScenePlanEditor({
   scenes,
   warnings,
   provider,
+  resolvedAssets,
   onScenesChange,
   onRegenerate,
   loading,
@@ -87,6 +89,7 @@ export function ScenePlanEditor({
             scene={scene}
             index={i}
             onChange={(updated) => handleSceneChange(i, updated)}
+            resolvedAsset={resolvedAssets?.[i]}
           />
         ))}
       </div>

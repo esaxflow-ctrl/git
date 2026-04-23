@@ -7,6 +7,7 @@ interface Props {
   step: WorkflowStep;
   renderStatus: RenderStatus | null;
   audioEnabled: boolean;
+  audioProvider?: string;
   providerInfo: {
     planner?: string;
     visuals?: string[];
@@ -63,6 +64,7 @@ export function RenderControls({
   step,
   renderStatus,
   audioEnabled,
+  audioProvider,
   providerInfo,
   onToggleAudio,
   onResolveVisuals,
@@ -74,6 +76,7 @@ export function RenderControls({
 }: Props) {
   const progressPct = renderStatus?.progressPercent ?? 0;
   const isRendering = step === "rendering";
+  const isSilentTTS = audioEnabled && audioSynthesized && audioProvider === "silent";
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -154,6 +157,23 @@ export function RenderControls({
               }}
             />
           </div>
+        </div>
+      )}
+
+      {/* Silent TTS warning */}
+      {isSilentTTS && (
+        <div
+          style={{
+            background: "#1c1200",
+            border: "1px solid #78350f",
+            borderRadius: 8,
+            padding: "8px 12px",
+            fontSize: 12,
+            color: "#fbbf24",
+          }}
+        >
+          ⚠ TTS returned silent audio. Your video will have no narration voice. Check that{" "}
+          <code>piper</code> or macOS <code>say</code> is available, or configure Kokoro.
         </div>
       )}
 

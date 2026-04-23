@@ -282,10 +282,29 @@ function buildCaption(narration: string): string {
   return caption;
 }
 
+const PHOTO_MODES = new Set<VisualMode>(["stockImage", "stockVideo"]);
+const CARD_MODES: VisualMode[] = ["quoteCard", "evidenceCard", "textCard", "timelineCard", "gradientMotionCard"];
+
 function assignVisualMode(index: number, usedModes: VisualMode[]): VisualMode {
   const last = usedModes[usedModes.length - 1];
   const secondLast = usedModes[usedModes.length - 2];
-  // Never repeat last 2 modes consecutively if possible
+  const thirdLast = usedModes[usedModes.length - 3];
+
+  // Hard rule: no more than 2 consecutive photo scenes
+  const twoConsecutivePhotos =
+    last && secondLast && PHOTO_MODES.has(last) && PHOTO_MODES.has(secondLast);
+
+  // Soft rule: if 2 of last 3 were photos, prefer a card next
+  const twoOfThreePhotos =
+    [last, secondLast, thirdLast].filter(Boolean).filter((m) => PHOTO_MODES.has(m!)).length >= 2;
+
+  const forceCard = twoConsecutivePhotos || twoOfThreePhotos;
+
+  if (forceCard) {
+    const pool = CARD_MODES.filter((m) => m !== last && m !== secondLast);
+    return pool.length > 0 ? pool[index % pool.length] : CARD_MODES[index % CARD_MODES.length];
+  }
+
   const candidates = VISUAL_MODES.filter((m) => m !== last && m !== secondLast);
   const pool = candidates.length > 0 ? candidates : VISUAL_MODES.filter((m) => m !== last);
   return pool[index % pool.length];
