@@ -16,51 +16,61 @@ function sceneHash(scene: ScenePlan): string {
     .slice(0, 8);
 }
 
-// Build a cinematic query from the scene's specific search terms and purpose.
-// Pexels works best with 2-4 concrete keywords, so we extract the most
-// visual/concrete words from the cinematic search terms.
-function buildPexelsQuery(scene: ScenePlan, termIndex = 0): string {
-  const term = scene.searchTerms[termIndex];
-  if (!term) return scene.searchTerms[0] ?? scene.mood ?? "contemplative";
+const SKIP_WORDS = new Set([
+  "close", "up", "extreme", "wide", "shot", "angle", "medium", "overhead",
+  "tracking", "style", "cinematic", "moody", "dramatic", "realistic",
+  "light", "lighting", "color", "palette", "tone", "avoid", "framing",
+  "editorial", "composition", "glow", "warm", "cool", "soft", "harsh",
+  "visible", "implied", "natural", "candid", "vérité",
+]);
 
-  // Strip overly descriptive words that confuse stock search engines;
-  // keep nouns, actions, and setting words.
-  const skipWords = new Set([
-    "close", "up", "extreme", "wide", "shot", "angle", "medium", "overhead",
-    "tracking", "style", "cinematic", "moody", "dramatic", "realistic",
-    "light", "lighting", "color", "palette", "tone", "avoid", "framing",
-    "editorial", "composition", "glow", "warm", "cool", "soft", "harsh",
-    "visible", "implied", "natural", "candid", "vérité",
-  ]);
-
+function buildPexelsQuery(term: string): string {
   const words = term
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, " ")
     .split(/\s+/)
-    .filter((w) => w.length >= 3 && !skipWords.has(w));
-
-  // Keep 3-4 most meaningful words
-  return words.slice(0, 4).join(" ") || scene.mood || "contemplative";
+    .filter((w) => w.length >= 3 && !SKIP_WORDS.has(w));
+  return words.slice(0, 4).join(" ");
 }
 
-// Fallback query: use different search term or mood-based imagery
-function buildFallbackQuery(scene: ScenePlan, termIndex = 0): string {
-  // Try next search term first
-  const nextTerm = scene.searchTerms[termIndex + 1];
-  if (nextTerm) return buildPexelsQuery(scene, termIndex + 1);
-
-  // Purpose-based fallback vocabulary
+function buildFallbackQuery(scene: ScenePlan): string {
   const purposeFallbacks: Record<VisualPurpose, string> = {
-    show_behavior: "person daily routine close up",
-    show_emotion: "human emotion close up portrait",
+    show_behavior: "person daily routine detail",
+    show_emotion: "human emotion portrait close up",
     show_consequence: "quiet room aftermath stillness",
     show_reframe: "perspective wide view contemplative",
     show_action: "hands working focused task",
   };
-
   return scene.visualPurpose
     ? purposeFallbacks[scene.visualPurpose]
-    : `${scene.mood} atmosphere close up`;
+    : `${scene.mood} atmosphere`;
+}
+
+interface PexelsPhoto {
+  id: number;
+  width: number;
+  height: number;
+  src: { large2x: string; large: string; original: string };
+}
+
+interface PexelsVideo {
+  id: number;
+  width: number;
+  height: number;
+  duration: number;
+  video_files: Array<{ link: string; width: number; height: number; quality: string }>;
+}
+
+// Portrait quality scoring — mirrors openverse.qualityScore()
+function scorePhoto(w: number, h: number, hasLarge2x: boolean): number {
+  let s = 0;
+  if (h > w) s += 4;
+  else if (h === w) s += 1;
+  const minDim = Math.min(w, h);
+  if (minDim >= 1080) s += 3;
+  else if (minDim >= 700) s += 1;
+  if (hasLarge2x) s += 1;
+  return s;
 }
 
 async function pexelsSearch(
@@ -71,7 +81,6 @@ async function pexelsSearch(
   const url = isVideo
     ? `${PEXELS_BASE}/videos/search?query=${encodeURIComponent(query)}&per_page=20&orientation=portrait`
     : `${PEXELS_BASE}/v1/search?query=${encodeURIComponent(query)}&per_page=20&orientation=portrait`;
-
   return fetch(url, {
     headers: { Authorization: apiKey },
     signal: AbortSignal.timeout(10000),
@@ -85,14 +94,23 @@ export async function fetchFromPexels(scene: ScenePlan): Promise<VisualAsset> {
   const isVideo = scene.visualMode === "stockVideo";
   const hash = sceneHash(scene);
 
-  // Try primary query first, then fall back to alternate queries
+  // Build query sequence: primary terms → 2-word expansion → purpose fallback
+  const termQueries = scene.searchTerms
+    .map(buildPexelsQuery)
+    .filter((q) => q.length >= 3);
+  const expandedQuery = termQueries[0]
+    ? termQueries[0].split(" ").slice(0, 2).join(" ")
+    : "";
   const queries = [
-    buildPexelsQuery(scene, 0),
-    buildPexelsQuery(scene, 1),
-    buildFallbackQuery(scene, 0),
-  ];
+    ...termQueries,
+    ...(expandedQuery && !termQueries.includes(expandedQuery) ? [expandedQuery] : []),
+    buildFallbackQuery(scene),
+  ].filter(Boolean);
+
+  const candidateQueries: string[] = [];
 
   for (const query of queries) {
+    candidateQueries.push(query);
     const res = await pexelsSearch(query, isVideo, apiKey);
 
     if (!res.ok) {
@@ -101,21 +119,11 @@ export async function fetchFromPexels(scene: ScenePlan): Promise<VisualAsset> {
     }
 
     if (isVideo) {
-      const data = (await res.json()) as {
-        videos: Array<{
-          id: number;
-          width: number;
-          height: number;
-          duration: number;
-          video_files: Array<{ link: string; width: number; height: number; quality: string }>;
-        }>;
-      };
-
+      const data = (await res.json()) as { videos: PexelsVideo[] };
       if (!data.videos || data.videos.length === 0) continue;
 
       const idx = deterministicIndex(hash + query, data.videos.length);
       const video = data.videos[idx];
-
       const file =
         video.video_files.find((f) => f.quality === "hd" && f.height >= 1080) ??
         video.video_files.find((f) => f.quality === "hd") ??
@@ -133,38 +141,55 @@ export async function fetchFromPexels(scene: ScenePlan): Promise<VisualAsset> {
           durationSeconds: video.duration,
           attribution: `Video by Pexels (ID: ${video.id})`,
           sceneHash: hash,
-        },
-      };
-    } else {
-      const data = (await res.json()) as {
-        photos: Array<{
-          id: number;
-          width: number;
-          height: number;
-          src: { large2x: string; large: string; original: string };
-        }>;
-      };
-
-      if (!data.photos || data.photos.length === 0) continue;
-
-      const idx = deterministicIndex(hash + query, data.photos.length);
-      const photo = data.photos[idx];
-
-      return {
-        type: "stockImage",
-        provider: "pexels",
-        url: photo.src.large2x ?? photo.src.large,
-        svgData: null,
-        thumbnailUrl: photo.src.large,
-        metadata: {
-          width: photo.width,
-          height: photo.height,
-          durationSeconds: null,
-          attribution: `Photo by Pexels (ID: ${photo.id})`,
-          sceneHash: hash,
+          debug: {
+            candidateQueries,
+            candidateCount: data.videos.length,
+            topScore: 0,
+            rankingReason: "video hd portrait preferred",
+          },
         },
       };
     }
+
+    // Photo path — rank by portrait quality, pick from top half
+    const data = (await res.json()) as { photos: PexelsPhoto[] };
+    if (!data.photos || data.photos.length === 0) continue;
+
+    const scored = data.photos.map((p) => ({
+      photo: p,
+      score: scorePhoto(p.width, p.height, Boolean(p.src.large2x)),
+    }));
+    scored.sort((a, b) => b.score - a.score);
+
+    const topScore = scored[0]?.score ?? 0;
+
+    // If best candidate is very weak (score < 4), try the next query for better results
+    if (topScore < 4 && query !== queries[queries.length - 1]) continue;
+
+    const topHalf = scored.slice(0, Math.max(1, Math.ceil(scored.length / 2)));
+    const idx = deterministicIndex(hash + query, topHalf.length);
+    const photo = topHalf[idx].photo;
+
+    return {
+      type: "stockImage",
+      provider: "pexels",
+      url: photo.src.large2x ?? photo.src.large,
+      svgData: null,
+      thumbnailUrl: photo.src.large,
+      metadata: {
+        width: photo.width,
+        height: photo.height,
+        durationSeconds: null,
+        attribution: `Photo by Pexels (ID: ${photo.id})`,
+        sceneHash: hash,
+        debug: {
+          candidateQueries,
+          candidateCount: data.photos.length,
+          topScore,
+          rankingReason: `portrait ${photo.height > photo.width ? "✓" : "✗"} minDim=${Math.min(photo.width, photo.height)}`,
+        },
+      },
+    };
   }
 
   throw new Error("No Pexels results for any query variant");

@@ -16,6 +16,9 @@ import {
   PacingMode,
   MotionStyle,
 } from "../lib/validation/schemas";
+
+type PanDirection = "right" | "left" | "up" | "down";
+const PAN_DIRS: PanDirection[] = ["right", "left", "up", "down"];
 import { VideoScene } from "./scenes/VideoScene";
 import { ImageScene } from "./scenes/ImageScene";
 import { GradientMotionCardScene } from "./scenes/GradientMotionCardScene";
@@ -26,36 +29,71 @@ import { KineticTextScene } from "./scenes/KineticTextScene";
 import { QuoteCardScene } from "./scenes/QuoteCardScene";
 import { CaptionLayer } from "./captions/CaptionLayer";
 
-// Role + pacing → override base motion style for stronger cinematic language
-function effectiveMotion(
+interface MotionConfig {
+  style: MotionStyle;
+  // 0.0 = barely moves, 1.0 = full amplitude
+  amplitude: number;
+  direction: PanDirection;
+}
+
+// Role + pacing → motion style, amplitude, and pan direction.
+// Direction cycles per sceneIndex so adjacent scenes never pan the same way.
+function computeMotion(
   base: MotionStyle,
   role: VisualRole | undefined,
-  pacing: PacingMode | undefined
-): MotionStyle {
-  if (role === "hook" && (pacing === "fast" || pacing === "medium")) return "zoom_in";
-  if (role === "climax") return "ken_burns";
-  if (role === "resolution") return "ken_burns";
-  if (role === "evidence" && pacing === "dramatic_pause") return "drift";
-  if (pacing === "fast") return "zoom_in";
-  if (pacing === "slow") return "ken_burns";
-  return base;
+  pacing: PacingMode | undefined,
+  sceneIndex: number,
+): MotionConfig {
+  const direction = PAN_DIRS[sceneIndex % 4];
+
+  // Amplitude by pacing
+  let amplitude = 0.75;
+  if (pacing === "dramatic_pause") amplitude = 0.2;
+  else if (pacing === "slow") amplitude = 0.55;
+  else if (pacing === "fast") amplitude = 1.0;
+
+  // Style by role, with pacing fallback
+  let style: MotionStyle = base;
+  if (role === "hook") { style = "zoom_in"; amplitude = 1.0; }
+  else if (role === "climax") { style = "parallax"; amplitude = Math.min(1.0, amplitude + 0.2); }
+  else if (role === "resolution") { style = "ken_burns"; }
+  else if (role === "evidence" && pacing === "dramatic_pause") { style = "static"; amplitude = 0; }
+  else if (role === "evidence") { style = "drift"; amplitude *= 0.6; }
+  else if (pacing === "fast") style = "zoom_in";
+  else if (pacing === "slow") style = "ken_burns";
+
+  return { style, amplitude, direction };
 }
 
 function SceneContent({
   scene,
   asset,
   style,
+  sceneIndex,
 }: {
   scene: ScenePlan;
   asset: VisualAsset;
   style: StyleProfile;
+  sceneIndex: number;
 }) {
-  const motion = effectiveMotion(style.motionStyle, scene.visualRole, scene.pacing);
+  const { style: motionStyle, amplitude, direction } = computeMotion(
+    style.motionStyle,
+    scene.visualRole,
+    scene.pacing,
+    sceneIndex,
+  );
   switch (asset.type) {
     case "stockVideo":
-      return <VideoScene asset={asset} motionStyle={motion} />;
+      return <VideoScene asset={asset} motionStyle={motionStyle} />;
     case "stockImage":
-      return <ImageScene asset={asset} motionStyle={motion} />;
+      return (
+        <ImageScene
+          asset={asset}
+          motionStyle={motionStyle}
+          amplitude={amplitude}
+          direction={direction}
+        />
+      );
     case "gradientMotionCard":
     case "mapCard":
       return <GradientMotionCardScene scene={scene} style={style} />;
@@ -182,8 +220,31 @@ function GlobalTransitionLayer({
       );
     }
 
-    // Wipe: black bar slides from right to left, revealing incoming scene
-    if (transitionStyle === "wipe" && d >= 0 && d <= 18) {
+    // Wipe: symmetric — outgoing scene covered by bar sliding in from left,
+    // then bar slides out to left revealing incoming scene.
+    if (transitionStyle === "wipe" && d >= -9 && d <= 18) {
+      if (d < 0) {
+        // Outgoing: black bar sweeps in from the left
+        const progress = interpolate(d, [-9, 0], [0, 1], {
+          easing: Easing.inOut(Easing.cubic),
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+        });
+        const clipLeft = interpolate(progress, [0, 1], [100, 0]);
+        return (
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              background: "black",
+              clipPath: `inset(0 0 0 ${clipLeft}%)`,
+              zIndex: 50,
+              pointerEvents: "none",
+            }}
+          />
+        );
+      }
+      // Incoming: black bar sweeps out to the right
       const progress = interpolate(d, [0, 18], [0, 1], {
         easing: Easing.inOut(Easing.cubic),
         extrapolateRight: "clamp",
@@ -231,17 +292,49 @@ export function ShortFormVideo(props: ShortFormVideoProps) {
         background: "#000",
       }}
     >
-      {/* Background music — low volume ambient track under narration */}
-      {audioEnabled && musicUrl && (
-        <Audio
-          src={
-            musicUrl.startsWith("file://") || musicUrl.startsWith("http")
-              ? musicUrl
-              : `file://${musicUrl}`
+      {/* Background music with real ducking envelope under narration */}
+      {audioEnabled && musicUrl && (() => {
+        // Build a per-frame volume function: 0.22 baseline, duck to 0.06 while
+        // any scene has narration audio, with 6-frame linear ramps at boundaries.
+        const MUSIC_BASE = 0.22;
+        const MUSIC_DUCK = 0.06;
+        const RAMP = 6;
+
+        // Narration frames = all frames covered by a scene with real audio
+        const narrationRanges = scenesWithTiming
+          .map((swt, i) => ({ start: swt.startFrame, end: swt.startFrame + swt.durationFrames, hasAudio: audioResults[i]?.provider !== "silent" && !!audioResults[i]?.path }))
+          .filter((r) => r.hasAudio);
+
+        const volumeFn = (f: number) => {
+          // Are we inside any narration range?
+          const inNarration = narrationRanges.some((r) => f >= r.start && f < r.end);
+          if (inNarration) return MUSIC_DUCK;
+
+          // Ramp back up within RAMP frames after narration ends
+          for (const r of narrationRanges) {
+            if (f >= r.end && f < r.end + RAMP) {
+              const t = (f - r.end) / RAMP;
+              return MUSIC_DUCK + (MUSIC_BASE - MUSIC_DUCK) * t;
+            }
+            if (f >= r.start - RAMP && f < r.start) {
+              const t = (r.start - f) / RAMP;
+              return MUSIC_DUCK + (MUSIC_BASE - MUSIC_DUCK) * (1 - t);
+            }
           }
-          volume={0.14}
-        />
-      )}
+          return MUSIC_BASE;
+        };
+
+        return (
+          <Audio
+            src={
+              musicUrl.startsWith("file://") || musicUrl.startsWith("http")
+                ? musicUrl
+                : `file://${musicUrl}`
+            }
+            volume={volumeFn}
+          />
+        );
+      })()}
 
       {scenesWithTiming.map((sceneWithTiming, i) => {
         const scene = scenes[i];
@@ -255,7 +348,7 @@ export function ShortFormVideo(props: ShortFormVideoProps) {
             durationInFrames={sceneWithTiming.durationFrames}
           >
             {/* Background visual */}
-            <SceneContent scene={scene} asset={asset} style={styleProfile} />
+            <SceneContent scene={scene} asset={asset} style={styleProfile} sceneIndex={i} />
 
             {/* Color tint overlay */}
             {colorStrategy.tint && <ColorTint tint={colorStrategy.tint} />}
@@ -289,6 +382,31 @@ export function ShortFormVideo(props: ShortFormVideoProps) {
       >
         <CaptionLayer captionEntries={captionEntries} style={styleProfile} />
       </div>
+
+      {/* Silent TTS warning — visible in preview and first frames of render */}
+      {audioEnabled &&
+        audioResults.length > 0 &&
+        audioResults.every((a) => a.provider === "silent" || !a.path) && (
+          <div
+            style={{
+              position: "absolute",
+              top: 36,
+              left: 36,
+              background: "#b91c1c",
+              color: "#fff",
+              fontFamily: "monospace",
+              fontSize: 26,
+              fontWeight: 700,
+              padding: "10px 18px",
+              borderRadius: 8,
+              zIndex: 100,
+              letterSpacing: 1,
+              pointerEvents: "none",
+            }}
+          >
+            ⚠ TTS SILENT — no narration audio
+          </div>
+        )}
 
       {/* Global transition layer — rendered outside Sequences so frame=0 is
           the composition start, not each scene start. This ensures outgoing

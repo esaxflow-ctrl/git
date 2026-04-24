@@ -11,7 +11,21 @@ const GENERIC_TERM_BLOCKLIST = new Set([
   "light", "dark", "color", "black", "white", "red", "blue", "green",
   "house", "home", "car", "road", "street", "building", "door", "window",
   "tree", "flower", "animal", "dog", "cat", "bird",
+  // Additional single-word offenders
+  "concept", "idea", "future", "modern", "professional", "creative",
+  "corporate", "social", "global", "digital", "online", "media",
+  "health", "wellness", "mindset", "journey", "story", "moment",
 ]);
+
+// Phrase-level blocklist — substrings that flag a multi-word term as too generic
+const GENERIC_PHRASE_BLOCKLIST = [
+  "business meeting", "city street", "people talking", "team work",
+  "office life", "daily life", "modern office", "urban life",
+  "beautiful landscape", "inspirational quote", "stock photo",
+  "people working", "group of people", "happy family", "busy street",
+  "work from home", "social media", "remote work", "startup culture",
+  "diverse team", "young professional", "motivated person",
+];
 
 // Shot/camera descriptor words that add no semantic content on their own
 const SHOT_DESCRIPTOR_WORDS = new Set([
@@ -29,9 +43,17 @@ export interface TermScore {
 
 // Score a single search term for specificity. Returns 0–10.
 function scoreSingleTerm(term: string): TermScore {
+  const lower = term.toLowerCase().trim();
   const words = term.trim().split(/\s+/);
   let score = 0;
   const reasons: string[] = [];
+
+  // Early hard penalty for phrase-level generics
+  const genericPhrase = GENERIC_PHRASE_BLOCKLIST.find((p) => lower.includes(p));
+  if (genericPhrase) {
+    score -= 5;
+    reasons.push(`contains generic phrase "${genericPhrase}"`);
+  }
 
   // Reward multi-word phrases
   if (words.length >= 5) { score += 4; reasons.push("long specific phrase"); }
@@ -96,6 +118,14 @@ export function validateSearchTerms(terms: string[]): ValidationResult {
       return {
         valid: false,
         reason: `Search term "${term}" is too generic. Replace with something specific to this scene.`,
+        warnings,
+      };
+    }
+    const matchedPhrase = GENERIC_PHRASE_BLOCKLIST.find((p) => lower.includes(p));
+    if (matchedPhrase) {
+      return {
+        valid: false,
+        reason: `Search term "${term}" contains a generic phrase ("${matchedPhrase}"). Use a more specific visual description.`,
         warnings,
       };
     }
