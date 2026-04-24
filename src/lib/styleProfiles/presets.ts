@@ -34,6 +34,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       minSceneDurationMs: 4000,
       maxSceneDurationMs: 14000,
     },
+    searchModifiers: "low key shadow high contrast noir",
   },
 
   documentary: {
@@ -69,6 +70,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       minSceneDurationMs: 5000,
       maxSceneDurationMs: 15000,
     },
+    searchModifiers: "realistic candid documentary natural light",
   },
 
   internet_mystery: {
@@ -104,6 +106,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       minSceneDurationMs: 3000,
       maxSceneDurationMs: 10000,
     },
+    searchModifiers: "dark underground neon glitch analog",
   },
 
   finance_news: {
@@ -139,6 +142,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       minSceneDurationMs: 4000,
       maxSceneDurationMs: 12000,
     },
+    searchModifiers: "corporate financial professional data clean",
   },
 
   horror_story: {
@@ -174,6 +178,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       minSceneDurationMs: 5000,
       maxSceneDurationMs: 16000,
     },
+    searchModifiers: "ominous dread shadow isolation dark",
   },
 
   motivational: {
@@ -209,6 +214,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       minSceneDurationMs: 3500,
       maxSceneDurationMs: 11000,
     },
+    searchModifiers: "bold energy dynamic light empowering",
   },
 
   sports_commentary: {
@@ -244,5 +250,6 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       minSceneDurationMs: 2500,
       maxSceneDurationMs: 9000,
     },
+    searchModifiers: "action motion sport intensity stadium",
   },
 };

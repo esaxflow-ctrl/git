@@ -17,6 +17,7 @@ import {
   StyleProfileSchema,
   ScenePlan,
   VisualAsset,
+  VisualAssetSchema,
   AudioResult,
 } from "../lib/validation/schemas";
 import { z } from "zod";
@@ -39,6 +40,13 @@ export type QualityReport = z.infer<typeof QualityReportSchema>;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const BASE = ((import.meta as any).env?.VITE_API_BASE as string | undefined) ?? "/api";
 
+export class QualityGateError extends Error {
+  constructor(public report: QualityReport) {
+    super("quality_gate");
+    this.name = "QualityGateError";
+  }
+}
+
 async function post<T>(url: string, body: unknown, schema: z.ZodType<T>): Promise<T> {
   const res = await fetch(`${BASE}${url}`, {
     method: "POST",
@@ -49,6 +57,9 @@ async function post<T>(url: string, body: unknown, schema: z.ZodType<T>): Promis
   const data = await res.json();
 
   if (!res.ok) {
+    if (res.status === 409 && data.error === "quality_gate") {
+      throw new QualityGateError(QualityReportSchema.parse(data.report));
+    }
     throw new Error(data.message ?? data.error ?? `HTTP ${res.status}`);
   }
 
@@ -75,6 +86,13 @@ export const api = {
   visuals: {
     resolve: (body: ResolveVisualsRequest) =>
       post<ResolveVisualsResponse>("/resolve-visuals", body, ResolveVisualsResponseSchema),
+
+    resolveOne: (body: { scene: ScenePlan; styleId: string }) =>
+      post<{ asset: VisualAsset; provider: string }>(
+        "/resolve-visual",
+        body,
+        z.object({ asset: VisualAssetSchema, provider: z.string() })
+      ),
   },
 
   tts: {

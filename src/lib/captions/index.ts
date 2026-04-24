@@ -92,14 +92,23 @@ export function buildCaptionEntries(
   const allEntries: CaptionEntry[] = [];
   let offsetMs = 0;
 
+  // Pre-compute scene start times so we can clamp caption endMs to scene boundaries
+  const sceneStartTimes: number[] = [];
+  let cumulative = 0;
+  for (let i = 0; i < scenes.length; i++) {
+    sceneStartTimes.push(cumulative);
+    cumulative += audioResults[i]?.durationMs ?? estimateSceneDuration(scenes[i]);
+  }
+  sceneStartTimes.push(cumulative); // sentinel for last scene end
+
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
     const audio = audioResults[i];
     const sceneDurationMs = audio?.durationMs ?? estimateSceneDuration(scene);
+    const sceneEndMs = sceneStartTimes[i + 1];
 
     let wordTimings: WordTiming[];
     if (audio?.wordTimings && audio.wordTimings.length > 0) {
-      // Offset existing timings
       wordTimings = audio.wordTimings.map((wt) => ({
         ...wt,
         startMs: wt.startMs + offsetMs,
@@ -110,7 +119,13 @@ export function buildCaptionEntries(
     }
 
     const entries = groupWordTimings(wordTimings, maxWordsPerGroup, scene.emphasisWords);
-    allEntries.push(...entries);
+
+    // Clamp endMs to the scene boundary so captions never bleed into the next scene
+    const clamped = entries.map((e) => ({
+      ...e,
+      endMs: Math.min(e.endMs, sceneEndMs - 1),
+    }));
+    allEntries.push(...clamped);
     offsetMs += sceneDurationMs;
   }
 

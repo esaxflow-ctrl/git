@@ -84,7 +84,7 @@ function DebugPanel({ scene, resolvedAsset }: { scene: ScenePlan; resolvedAsset?
         </div>
       </div>
 
-      {/* Resolved asset info */}
+      {/* Resolved asset info + telemetry */}
       {resolvedAsset && (
         <div>
           <div style={{ color: "#4b5563", marginBottom: 4 }}>Resolved asset:</div>
@@ -103,15 +103,38 @@ function DebugPanel({ scene, resolvedAsset }: { scene: ScenePlan; resolvedAsset?
             </div>
           )}
           {resolvedAsset.url && (
-            <div
-              style={{
-                marginTop: 4,
-                color: "#1d4ed8",
-                wordBreak: "break-all",
-                fontSize: 10,
-              }}
-            >
+            <div style={{ marginTop: 4, color: "#1d4ed8", wordBreak: "break-all", fontSize: 10 }}>
               {resolvedAsset.url.slice(0, 80)}{resolvedAsset.url.length > 80 ? "…" : ""}
+            </div>
+          )}
+
+          {/* Debug telemetry from provider */}
+          {resolvedAsset.metadata.debug && (
+            <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 5 }}>
+              <div style={{ color: "#4b5563", fontSize: 11 }}>
+                Queries tried ({resolvedAsset.metadata.debug.candidateCount} candidates, top score {resolvedAsset.metadata.debug.topScore}):
+              </div>
+              <div style={rowStyle}>
+                {resolvedAsset.metadata.debug.candidateQueries.map((q, i) => (
+                  <span
+                    key={i}
+                    style={{
+                      background: "#0a0f1a",
+                      border: "1px solid #1f2937",
+                      borderRadius: 4,
+                      padding: "2px 7px",
+                      color: "#6b7280",
+                      fontSize: 10,
+                      fontFamily: "monospace",
+                    }}
+                  >
+                    {q.length > 40 ? q.slice(0, 40) + "…" : q}
+                  </span>
+                ))}
+              </div>
+              <div style={{ fontSize: 10, color: "#374151" }}>
+                Ranking: {resolvedAsset.metadata.debug.rankingReason}
+              </div>
             </div>
           )}
         </div>

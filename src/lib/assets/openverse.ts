@@ -104,16 +104,21 @@ export async function fetchFromOpenverse(scene: ScenePlan): Promise<VisualAsset>
     scene.mood ?? "contemplative",
   ].filter((q) => q.length >= 2);
 
+  const candidateQueries: string[] = [];
+
   for (const query of queries) {
+    candidateQueries.push(query);
     try {
       const results = await openverseSearch(query);
       if (results.length === 0) continue;
 
       // Rank by portrait quality, pick deterministically from top-half
-      const ranked = [...results].sort((a, b) => qualityScore(b) - qualityScore(a));
-      const topHalf = ranked.slice(0, Math.max(1, Math.ceil(ranked.length / 2)));
+      const scored = results.map((r) => ({ img: r, score: qualityScore(r) }));
+      scored.sort((a, b) => b.score - a.score);
+      const topScore = scored[0]?.score ?? 0;
+      const topHalf = scored.slice(0, Math.max(1, Math.ceil(scored.length / 2)));
       const idx = deterministicIndex(hash + query, topHalf.length);
-      const img = topHalf[idx];
+      const img = topHalf[idx].img;
 
       return {
         type: "stockImage",
@@ -127,6 +132,12 @@ export async function fetchFromOpenverse(scene: ScenePlan): Promise<VisualAsset>
           durationSeconds: null,
           attribution: `Photo by ${img.creator} via Openverse (${img.license})`,
           sceneHash: hash,
+          debug: {
+            candidateQueries,
+            candidateCount: results.length,
+            topScore,
+            rankingReason: `portrait ${img.height > img.width ? "✓" : "✗"} minDim=${Math.min(img.width || 0, img.height || 0)}`,
+          },
         },
       };
     } catch {

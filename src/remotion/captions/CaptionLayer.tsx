@@ -98,6 +98,9 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
     );
   }
 
+  // Shared strong contrast shadow applied to every caption mode
+  const CONTRAST_SHADOW = "0 2px 10px rgba(0,0,0,0.95), 0 0 3px rgba(0,0,0,0.98)";
+
   function renderKaraoke() {
     const charProgress = Math.floor(entryProgress * activeEntry.text.length);
     return (
@@ -117,8 +120,8 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
               color: i <= charProgress ? highlightColor : color,
               textShadow:
                 i <= charProgress
-                  ? `0 0 22px ${highlightColor}77, 0 2px 8px rgba(0,0,0,0.9)`
-                  : "0 2px 8px rgba(0,0,0,0.85)",
+                  ? `0 0 22px ${highlightColor}77, ${CONTRAST_SHADOW}`
+                  : CONTRAST_SHADOW,
             }}
           >
             {char}
@@ -138,7 +141,7 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
           fontWeight: 800,
           color,
           textAlign: "center",
-          textShadow: "0 2px 10px rgba(0,0,0,0.9)",
+          textShadow: CONTRAST_SHADOW,
           lineHeight: 1.25,
         }}
       >
@@ -179,12 +182,14 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
     >
       <div
         style={{
-          background: "rgba(0,0,0,0.52)",
+          background: "rgba(0,0,0,0.62)",
           borderRadius: 18,
           padding: "18px 32px",
-          maxWidth: "88%",
-          backdropFilter: "blur(6px)",
-          border: "1px solid rgba(255,255,255,0.07)",
+          // Hard limit so text never forces a 3rd line on a 9:16 canvas
+          maxWidth: "82%",
+          backdropFilter: "blur(8px)",
+          border: "1px solid rgba(255,255,255,0.08)",
+          boxShadow: "0 4px 24px rgba(0,0,0,0.5)",
         }}
       >
         {content}

@@ -6,7 +6,9 @@ import {
   VisualRole,
   VisualPurpose,
   PlannerOptions,
+  StyleProfile,
 } from "../validation/schemas";
+import { scoreSearchTerms } from "../validation/antiGeneric";
 
 // ─── Stopwords ────────────────────────────────────────────────────────────────
 
@@ -31,18 +33,17 @@ const STOPWORDS = new Set([
 
 // ─── Visual Mode & Role Sequences ─────────────────────────────────────────────
 
-// Photo-first rotation: real photos for the majority, SVG cards as
-// rhythmic punctuation. Each photo is unique (Openverse search per scene)
-// so this still avoids the "everything looks the same" failure mode.
+// Balanced rotation: 3 photos + 5 cards so consecutive-photo hard rule fires
+// less often and visual variety is built-in rather than enforced after the fact.
 const VISUAL_MODES: VisualMode[] = [
   "stockImage",
   "quoteCard",
   "stockImage",
-  "stockImage",
+  "gradientMotionCard",
   "evidenceCard",
-  "stockImage",
   "textCard",
   "stockImage",
+  "quoteCard",
 ];
 
 const PACING_PATTERN: PacingMode[] = [
@@ -199,35 +200,64 @@ function findVisualTheme(narration: string): string[] | null {
   return null;
 }
 
+// Mood → deterministic fallback terms used when keyword-built terms score too low
+const MOOD_FALLBACK_TERMS: Record<string, string[]> = {
+  hollow: ["person staring wall blank expression", "empty cup desk forgotten morning"],
+  dread: ["hands clasped tight waiting room dim", "shallow breathing chest close up"],
+  restless: ["fingers tapping table close up", "feet pacing floor restless"],
+  relief: ["exhale breath fogged window cold", "shoulders dropping tension slow"],
+  triumphant: ["hands raised open sky dawn", "finish line stride forward"],
+  mysterious: ["fog corridor dark hallway lit", "shadow figure silhouette window"],
+  analytical: ["notebook pen annotated margins lamp", "data points graph paper hand"],
+  historical: ["aged paper close up texture", "old photograph framed desk"],
+  neutral: ["person window quiet room light", "single lamp desk late evening"],
+  defiant: ["direct gaze lens close up", "clenched jaw side profile rim light"],
+};
+
 function buildCinematicSearchTerms(
   narration: string,
   purpose: VisualPurpose,
   mode: VisualMode,
-  scriptContext: string
+  scriptContext: string,
+  sceneIndex = 0,
+  mood = "neutral",
 ): string[] {
-  const themeTerms = findVisualTheme(narration);
-  if (themeTerms && themeTerms.length > 0) {
-    // Use up to 2 theme terms for specificity
-    return themeTerms.slice(0, 2);
-  }
-
-  // Fallback: build from keywords + shot type context
-  const keywords = extractKeywords(narration).slice(0, 3);
   const shotTypes = SHOT_TYPE_BY_PURPOSE[purpose];
-  const shotPrefix = shotTypes[Math.floor(Math.random() * shotTypes.length)];
+  // Deterministic shot selection keyed on index — no Math.random
+  const shotPrefix = shotTypes[sceneIndex % shotTypes.length];
   const context = CINEMATIC_CONTEXTS_BY_MODE[mode];
 
-  if (keywords.length === 0) {
-    return ["person quiet room contemplative", "single object desk close up"];
+  const themeTerms = findVisualTheme(narration);
+  const keywords = extractKeywords(narration).slice(0, 3);
+
+  let candidates: string[];
+
+  if (themeTerms && themeTerms.length > 0) {
+    candidates = themeTerms.slice(0, 2);
+  } else if (keywords.length === 0) {
+    candidates = MOOD_FALLBACK_TERMS[mood] ?? MOOD_FALLBACK_TERMS["neutral"]!;
+  } else {
+    const primary =
+      `${shotPrefix} ${keywords[0]} ${keywords[1] ?? ""} ${context.split(",")[0]}`.trim();
+    const secondary = keywords[1]
+      ? `${keywords[1]} ${keywords[2] ?? keywords[0]} close up detail`
+      : `${keywords[0]} detail close up light`;
+    candidates = [primary, secondary].map((t) => t.replace(/\s+/g, " ").trim());
   }
 
-  // Combine keyword with shot descriptor for specificity
-  const primary = `${shotPrefix} ${keywords[0]} ${keywords[1] ?? ""} ${context.split(",")[0]}`.trim();
-  const secondary = keywords[1]
-    ? `${keywords[1]} ${keywords[2] ?? keywords[0]} close up detail`
-    : `${keywords[0]} detail close up light`;
+  // Score the candidates; if average is too low, fall back to mood-keyed specifics
+  const { avgScore, weak } = scoreSearchTerms(candidates);
+  if (avgScore < 3 || weak.length === candidates.length) {
+    const moodTerms = MOOD_FALLBACK_TERMS[mood] ?? MOOD_FALLBACK_TERMS["neutral"]!;
+    // Mix: replace weakest slot with mood fallback, keep strongest original
+    const strong = candidates.filter((_, i) => !weak.includes(candidates[i]));
+    candidates = [
+      ...(strong.length > 0 ? strong : []),
+      moodTerms[sceneIndex % moodTerms.length],
+    ];
+  }
 
-  return [primary, secondary].map((t) => t.replace(/\s+/g, " ").trim());
+  return candidates.slice(0, 3);
 }
 
 function buildCinematicPrompt(
@@ -285,29 +315,52 @@ function buildCaption(narration: string): string {
 const PHOTO_MODES = new Set<VisualMode>(["stockImage", "stockVideo"]);
 const CARD_MODES: VisualMode[] = ["quoteCard", "evidenceCard", "textCard", "timelineCard", "gradientMotionCard"];
 
-function assignVisualMode(index: number, usedModes: VisualMode[]): VisualMode {
+function assignVisualMode(
+  index: number,
+  usedModes: VisualMode[],
+  rolePattern: VisualRole[],
+  style?: StyleProfile,
+): VisualMode {
   const last = usedModes[usedModes.length - 1];
   const secondLast = usedModes[usedModes.length - 2];
   const thirdLast = usedModes[usedModes.length - 3];
 
+  const preferred = style?.visualMixRules?.preferredModes ?? [];
+
   // Hard rule: no more than 2 consecutive photo scenes
   const twoConsecutivePhotos =
-    last && secondLast && PHOTO_MODES.has(last) && PHOTO_MODES.has(secondLast);
+    last != null && secondLast != null && PHOTO_MODES.has(last) && PHOTO_MODES.has(secondLast);
 
   // Soft rule: if 2 of last 3 were photos, prefer a card next
   const twoOfThreePhotos =
-    [last, secondLast, thirdLast].filter(Boolean).filter((m) => PHOTO_MODES.has(m!)).length >= 2;
+    ([last, secondLast, thirdLast].filter(Boolean) as VisualMode[]).filter((m) =>
+      PHOTO_MODES.has(m)
+    ).length >= 2;
 
-  const forceCard = twoConsecutivePhotos || twoOfThreePhotos;
+  // Role balance: hook was a photo → first climax gets a card, and vice versa
+  const currentRole = rolePattern[Math.min(index, rolePattern.length - 1)];
+  const hookMode = usedModes[0];
+  const firstClimax = !rolePattern.slice(0, index).includes("climax");
+  const forceCardForClimaxBalance =
+    currentRole === "climax" && firstClimax && hookMode != null && PHOTO_MODES.has(hookMode);
+
+  const forceCard = twoConsecutivePhotos || twoOfThreePhotos || forceCardForClimaxBalance;
 
   if (forceCard) {
-    const pool = CARD_MODES.filter((m) => m !== last && m !== secondLast);
+    const cardPool = CARD_MODES.filter((m) => m !== last && m !== secondLast);
+    // Bias toward style-preferred cards if any match
+    const styleCards = cardPool.filter((m) => preferred.includes(m));
+    const pool = styleCards.length > 0 ? styleCards : cardPool;
     return pool.length > 0 ? pool[index % pool.length] : CARD_MODES[index % CARD_MODES.length];
   }
 
   const candidates = VISUAL_MODES.filter((m) => m !== last && m !== secondLast);
-  const pool = candidates.length > 0 ? candidates : VISUAL_MODES.filter((m) => m !== last);
-  return pool[index % pool.length];
+  const basePool = candidates.length > 0 ? candidates : VISUAL_MODES.filter((m) => m !== last);
+
+  // Bias toward style-preferred modes when possible
+  const stylePool = basePool.filter((m) => preferred.includes(m));
+  const finalPool = stylePool.length > 0 ? stylePool : basePool;
+  return finalPool[index % finalPool.length];
 }
 
 function inferMood(text: string): string {
@@ -357,12 +410,11 @@ export async function generateDeterministic(
       ? "show_action"
       : PURPOSE_PATTERN[Math.min(i, PURPOSE_PATTERN.length - 1)];
 
-    const visualMode = assignVisualMode(i, usedModes);
+    const visualMode = assignVisualMode(i, usedModes, ROLE_PATTERN, options.style);
     usedModes.push(visualMode);
 
     const mood = inferMood(narration);
-
-    const searchTerms = buildCinematicSearchTerms(narration, purpose, visualMode, script);
+    const searchTerms = buildCinematicSearchTerms(narration, purpose, visualMode, script, i, mood);
 
     const cinematicPrompt = buildCinematicPrompt(narration, purpose, visualMode, mood);
 

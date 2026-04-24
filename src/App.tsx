@@ -2,10 +2,11 @@ import { useState, useCallback, useRef, useEffect } from "react";
 import {
   ScenePlan,
   VisualAsset,
+  VisualMode,
   AudioResult,
   RenderStatus,
 } from "./lib/validation/schemas";
-import { api, QualityReport } from "./api/client";
+import { api, QualityReport, QualityGateError } from "./api/client";
 import { ScriptInput } from "./components/ScriptInput";
 import { ScenePlanEditor } from "./components/ScenePlanEditor";
 import { RenderControls } from "./components/RenderControls";
@@ -129,16 +130,33 @@ export default function App() {
     }
   }, [state.scenes, state.providerInfo]);
 
-  const handleRender = useCallback(async () => {
+  const handleRender = useCallback(async (force = false) => {
     patch({ step: "rendering", error: null, renderStatus: null });
     try {
-      const { jobId } = await api.render.start({
-        scenes: state.scenes,
-        resolvedAssets: state.resolvedAssets,
-        audioResults: state.audioResults.map(({ path: _p, ...rest }) => rest) as never,
-        styleId: state.styleId,
-        audioEnabled: state.audioEnabled,
-      });
+      const url = force ? "/render?force=true" : "/render";
+      const { jobId } = await (force
+        ? fetch(`/api${url}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              scenes: state.scenes,
+              resolvedAssets: state.resolvedAssets,
+              audioResults: state.audioResults.map(({ path: _p, ...rest }) => rest),
+              styleId: state.styleId,
+              audioEnabled: state.audioEnabled,
+            }),
+          }).then(async (r) => {
+            const d = await r.json();
+            if (!r.ok) throw new Error(d.message ?? d.error ?? `HTTP ${r.status}`);
+            return d as { jobId: string };
+          })
+        : api.render.start({
+            scenes: state.scenes,
+            resolvedAssets: state.resolvedAssets,
+            audioResults: state.audioResults.map(({ path: _p, ...rest }) => rest) as never,
+            styleId: state.styleId,
+            audioEnabled: state.audioEnabled,
+          }));
 
       patch({ renderJobId: jobId });
 
@@ -149,9 +167,31 @@ export default function App() {
         (msg) => patch({ step: "error", error: msg })
       );
     } catch (err) {
-      patch({ step: "error", error: String(err) });
+      if (err instanceof QualityGateError) {
+        patch({ step: "editing", qualityReport: err.report, error: "Quality gate blocked render — fix issues below or click Render Again to force." });
+      } else {
+        patch({ step: "error", error: String(err) });
+      }
     }
   }, [state]);
+
+  // Swap a single scene's visual mode and re-resolve just that one
+  const handleSwapMode = useCallback(async (sceneIndex: number, newMode: VisualMode) => {
+    const updatedScenes = state.scenes.map((s, i) =>
+      i === sceneIndex ? { ...s, visualMode: newMode } : s
+    );
+    patch({ scenes: updatedScenes });
+    try {
+      const { asset } = await api.visuals.resolveOne({
+        scene: updatedScenes[sceneIndex],
+        styleId: state.styleId,
+      });
+      const updatedAssets = state.resolvedAssets.map((a, i) => (i === sceneIndex ? asset : a));
+      patch({ resolvedAssets: updatedAssets, visualsResolved: true });
+    } catch (err) {
+      patch({ error: `Swap failed: ${String(err)}` });
+    }
+  }, [state.scenes, state.resolvedAssets, state.styleId]);
 
   // Auto-run quality analysis whenever visuals or audio change
   useEffect(() => {
@@ -246,7 +286,12 @@ export default function App() {
         {state.visualsResolved && state.resolvedAssets.length > 0 && (
           <>
             <Divider />
-            <StoryboardPanel scenes={state.scenes} resolvedAssets={state.resolvedAssets} />
+            <StoryboardPanel
+              scenes={state.scenes}
+              resolvedAssets={state.resolvedAssets}
+              styleId={state.styleId}
+              onSwapMode={handleSwapMode}
+            />
           </>
         )}
 

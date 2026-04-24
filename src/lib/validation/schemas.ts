@@ -141,6 +141,9 @@ export const StyleProfileSchema = z.object({
   narrationStyle: NarrationStyleSchema,
   visualMixRules: VisualMixRulesSchema,
   pacingRules: PacingRulesSchema,
+  // Space-separated keywords appended to provider search queries to steer
+  // results toward the style's look (e.g. "low key shadow" for dark_cinematic).
+  searchModifiers: z.string().default(""),
 });
 export type StyleProfile = z.infer<typeof StyleProfileSchema>;
 
@@ -156,6 +159,14 @@ export const VisualAssetSchema = z.object({
     durationSeconds: z.number().nullable(),
     attribution: z.string().nullable(),
     sceneHash: z.string(),
+    debug: z
+      .object({
+        candidateQueries: z.array(z.string()),
+        candidateCount: z.number(),
+        topScore: z.number(),
+        rankingReason: z.string(),
+      })
+      .optional(),
   }),
 });
 export type VisualAsset = z.infer<typeof VisualAssetSchema>;

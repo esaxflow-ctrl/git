@@ -17,6 +17,18 @@ async function tryProvider(
   }
 }
 
+// Append style-specific search modifiers to a scene's search terms.
+// Returns a shallow clone of the scene with augmented terms so the original
+// plan is not mutated.
+function applyStyleModifiers(scene: ScenePlan, style: StyleProfile): ScenePlan {
+  const modifiers = style.searchModifiers?.trim();
+  if (!modifiers) return scene;
+  return {
+    ...scene,
+    searchTerms: scene.searchTerms.map((t) => `${t} ${modifiers}`),
+  };
+}
+
 export async function resolveVisual(
   scene: ScenePlan,
   style: StyleProfile
@@ -24,6 +36,8 @@ export async function resolveVisual(
   const cacheKey = assetCacheKey(scene.searchTerms, scene.visualMode);
   const cached = await assetCache.get(cacheKey);
   if (cached) return cached as VisualAsset;
+
+  const augmented = applyStyleModifiers(scene, style);
 
   const needsVideo = scene.visualMode === "stockVideo";
   const needsPhoto = scene.visualMode === "stockImage";
@@ -34,18 +48,17 @@ export async function resolveVisual(
   if (!needsGenerated) {
     // 1. Pexels — video OR image, requires API key
     if (process.env.PEXELS_API_KEY) {
-      asset = await tryProvider("pexels", () => fetchFromPexels(scene));
+      asset = await tryProvider("pexels", () => fetchFromPexels(augmented));
     }
 
     // 2. Pixabay — images only, requires API key (key is optional but usually needed)
     if (!asset && !needsVideo && process.env.PIXABAY_API_KEY) {
-      asset = await tryProvider("pixabay", () => fetchFromPixabay(scene));
+      asset = await tryProvider("pixabay", () => fetchFromPixabay(augmented));
     }
 
     // 3. Openverse — free, no API key required, CC-licensed images
-    // Used for stockImage, and for stockVideo fallback (still image instead of SVG card)
     if (!asset) {
-      asset = await tryProvider("openverse", () => fetchFromOpenverse(scene));
+      asset = await tryProvider("openverse", () => fetchFromOpenverse(augmented));
     }
   }
 

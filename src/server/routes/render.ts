@@ -8,6 +8,7 @@ import { synthesizeScenes } from "../../lib/tts";
 import { exportSRT } from "../../lib/captions/srt";
 import { buildCaptionEntries } from "../../lib/captions";
 import { resolveBackgroundMusic } from "../../lib/music";
+import { analyzeQuality } from "../../lib/qualityGate";
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR ?? "/tmp/sfv-output";
 
@@ -35,6 +36,25 @@ renderRouter.post("/", async (req, res) => {
   } catch (err) {
     res.status(400).json({ error: "unknown_style", message: String(err) });
     return;
+  }
+
+  // Quality gate — block renders with critical issues unless ?force=true
+  const forceRender = req.query.force === "true";
+  if (!forceRender) {
+    const qualityReport = analyzeQuality(
+      scenes,
+      resolvedAssets.length > 0 ? resolvedAssets : null,
+      clientAudioResults.map((a) => ({
+        path: "",
+        durationMs: a.durationMs ?? 0,
+        provider: (a.provider ?? "silent") as "kokoro" | "piper" | "macos_say" | "silent",
+        wordTimings: null,
+      }))
+    );
+    if (qualityReport.blockers.length > 0 || qualityReport.overallScore < 55) {
+      res.status(409).json({ error: "quality_gate", report: qualityReport });
+      return;
+    }
   }
 
   const jobId = uuidv4();
