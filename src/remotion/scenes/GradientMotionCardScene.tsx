@@ -1,6 +1,6 @@
 import { useCurrentFrame, useVideoConfig, spring, interpolate, Easing } from "remotion";
 import { ScenePlan, StyleProfile } from "../../lib/validation/schemas";
-import crypto from "crypto";
+import md5 from "md5";
 
 interface Props {
   scene: ScenePlan;
@@ -13,7 +13,7 @@ type LayoutVariant = "left_accent" | "bottom_reveal" | "centered_impact";
 
 function pickVariant(sceneId: string): LayoutVariant {
   const variants: LayoutVariant[] = ["left_accent", "bottom_reveal", "centered_impact"];
-  const hash = crypto.createHash("md5").update(sceneId).digest("hex");
+  const hash = md5(sceneId);
   const idx = parseInt(hash.slice(0, 4), 16) % variants.length;
   return variants[idx];
 }
