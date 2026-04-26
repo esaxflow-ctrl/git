@@ -264,61 +264,84 @@ class Tracker:
         log.info("Wallet refresh complete")
 
     async def _discover_wallets_from_markets(self) -> list[dict]:
-        """Fallback wallet discovery: try several public API endpoints for wallet addresses."""
+        """Discover active traders from the Polygon blockchain (public, no auth required).
+
+        Polymarket runs on Polygon. Every trade emits ERC-1155 TransferSingle events on the
+        Gnosis CTF contract. The 'to' topic is the buyer's proxy wallet — always indexed,
+        always public. We collect these addresses from recent blocks using free RPC endpoints.
+        """
+        import aiohttp as _aiohttp
+
+        # Gnosis Conditional Tokens Framework — the ERC-1155 contract all Polymarket
+        # positions are minted/transferred through. Stable address, never changes.
+        CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+
+        # Free public Polygon RPC endpoints (no API key needed)
+        RPC_ENDPOINTS = [
+            "https://polygon-rpc.com",
+            "https://rpc.ankr.com/polygon",
+            "https://polygon-bor-rpc.publicnode.com",
+        ]
+
+        async def _rpc(session, url: str, method: str, params: list) -> dict:
+            async with session.post(
+                url,
+                json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
+                timeout=_aiohttp.ClientTimeout(total=20),
+            ) as resp:
+                return await resp.json()
+
         seen: set[str] = set()
         entries: list[dict] = []
 
-        def _extract(rows: list) -> None:
-            for row in rows:
-                addr = (
-                    row.get("proxyWallet") or row.get("user") or
-                    row.get("address") or row.get("userId") or
-                    row.get("maker") or ""
-                ).lower()
-                if addr and len(addr) >= 10 and addr not in seen:
-                    seen.add(addr)
-                    entries.append({"address": addr})
-
-        # Attempt 1: Data API global positions (no user filter)
-        for params in [
-            {"sizeThreshold": 10, "limit": 500},
-            {"limit": 500},
-        ]:
+        for rpc_url in RPC_ENDPOINTS:
             try:
-                data = await self.data._get(self.data._DATA_BASE, "/positions", params=params)
-                rows = data if isinstance(data, list) else (data or {}).get("positions", (data or {}).get("data", []))
-                if rows:
-                    _extract(rows)
-                    log.info("Data API /positions (no user) → %d addresses", len(entries))
-                    break
-            except Exception:
-                pass
+                async with _aiohttp.ClientSession() as session:
+                    # Step 1: get latest block number
+                    bn_resp = await _rpc(session, rpc_url, "eth_blockNumber", [])
+                    latest = int(bn_resp["result"], 16)
+                    # ~2 blocks/sec on Polygon — 5000 blocks ≈ 40 min of trades
+                    from_block = latest - 5000
 
-        # Attempt 2: Data API recent activity (no user filter)
-        if len(entries) < 50:
-            for params in [{"limit": 500}, {"limit": 200, "type": "TRADE"}]:
-                try:
-                    data = await self.data._get(self.data._DATA_BASE, "/activity", params=params)
-                    rows = data if isinstance(data, list) else (data or {}).get("activity", (data or {}).get("data", []))
-                    if rows:
-                        _extract(rows)
-                        log.info("Data API /activity (no user) → %d addresses", len(entries))
-                        break
-                except Exception:
-                    pass
+                    # Step 2: fetch all logs from the CTF contract
+                    logs_resp = await _rpc(session, rpc_url, "eth_getLogs", [{
+                        "address": CTF_CONTRACT,
+                        "fromBlock": hex(from_block),
+                        "toBlock": "latest",
+                    }])
 
-        # Attempt 3: Gamma positions with no user filter
-        if len(entries) < 50:
-            try:
-                data = await self.gamma._get("/positions", params={"limit": 500, "sizeThreshold": 10})
-                rows = data if isinstance(data, list) else (data or {}).get("positions", [])
-                if rows:
-                    _extract(rows)
-                    log.info("Gamma /positions (no user) → %d addresses", len(entries))
-            except Exception:
-                pass
+                raw_logs = logs_resp.get("result", [])
+                if not isinstance(raw_logs, list):
+                    log.debug("Polygon RPC %s returned non-list: %s", rpc_url, raw_logs)
+                    continue
 
-        log.info("Wallet discovery found %d unique addresses (manual seeding may be needed if 0)", len(entries))
+                for entry in raw_logs:
+                    for topic in entry.get("topics", [])[1:]:  # topics[0] is event sig
+                        # Ethereum addresses are zero-padded to 32 bytes in topics.
+                        # Pattern: 0x + 24 zero chars + 40 hex addr chars
+                        if (isinstance(topic, str) and len(topic) == 66
+                                and topic.startswith("0x000000000000000000000000")):
+                            addr = "0x" + topic[26:]
+                            if addr != "0x" + "0" * 40 and addr not in seen:
+                                seen.add(addr)
+                                entries.append({"address": addr.lower()})
+
+                log.info(
+                    "Polygon RPC discovery (%s): %d logs → %d unique addresses",
+                    rpc_url, len(raw_logs), len(entries),
+                )
+                if entries:
+                    break  # got results, no need to try next RPC
+
+            except Exception as exc:
+                log.debug("Polygon RPC %s failed: %s", rpc_url, exc)
+
+        if not entries:
+            log.warning(
+                "Polygon RPC discovery returned 0 addresses — "
+                "try: python main.py add-wallet <address> to seed manually"
+            )
+
         return entries
 
     async def _upsert_wallet(self, address: str, leaderboard_entry: dict) -> None:
