@@ -1,261 +1,258 @@
-# Short-Form Video System
+# Solana Meme-Coin Trading Bot Framework
 
-Script → downloadable 1080×1920 MP4 with captions, scene-specific visuals, and optional narration. Target: 60–75 seconds.
+A production-grade scaffolding for **discovering, filtering, and selectively trading Solana meme coins**, built around one principle:
 
-## What This Is Not
+> **Reject ~95% of tokens. Only act when multiple independent signals agree.**
 
-This is not a MediaRecorder browser export. Final rendering uses Remotion's `renderMedia()` server-side with Chromium workers. Duration is computed from actual audio timing or word-count estimation — never from browser clock drift.
+This is not a pump bot. It is a **garbage-rejection machine** with a paper-trading-first workflow, hard risk caps, a kill switch, and full reasoning trails for every accepted *and* rejected trade.
+
+> ⚠️ **No guarantees.** Meme-coin markets are adversarial and reflexive. This framework is designed to limit downside and surface opportunities; it does **not** promise profit. Read the *Common failure modes* section before enabling live trading.
 
 ---
 
-## Quick Start (Zero Paid APIs)
+## Tech stack
+
+- Node.js ≥ 20 / TypeScript / pnpm
+- `@solana/web3.js` for chain interaction
+- **Jupiter Swap API** (quote + swap) for execution and route discovery
+- **Helius** RPC + Enhanced Transactions + Webhooks for on-chain monitoring
+- **Birdeye** + **DexScreener** for prices, liquidity, volume, trending, boosts
+- **X API v2** for social signal monitoring
+- **SQLite** (better-sqlite3) — Postgres swap-in is straightforward
+
+---
+
+## Install
 
 ```bash
-git clone <repo>
-cd short-form-video-system
-npm install
+pnpm install
 cp .env.example .env
-npm run dev
+# fill in API keys and wallet public key in .env
+mkdir -p data keys
 ```
 
-Open `http://localhost:3000`, paste a script, click **Generate Plan**, then **Render MP4**.
-
-With no API keys set, the system uses:
-- **Planner**: deterministic sentence splitter (no LLM needed)
-- **Visuals**: generated SVG motion graphics (no stock API needed)
-- **Audio**: silent (produces a valid MP4 with estimated timing)
+If you intend to ever enable live trading, place your keypair JSON at the path
+referenced by `PRIVATE_KEY_PATH` (default `./keys/trading-wallet.json`).
+**Never paste a private key into source code or commit it.** Permissions on the
+key file should be `chmod 600`.
 
 ---
 
-## Setup
+## Run modes
 
-### 1. Install
+| Command | What it does |
+|---|---|
+| `pnpm dev` | Watch-mode boot of the full pipeline in paper mode |
+| `pnpm scan` | Run discovery + scoring loop, write signals to DB, do not trade |
+| `pnpm paper` | Full pipeline, simulated entries/exits via Jupiter quotes |
+| `pnpm backtest` | Replay historical token snapshots through the strategies |
+| `pnpm live` | **Locked.** Refuses to run unless `LIVE_TRADING=true` and `PAPER_TRADING=false` |
+| `pnpm test` | Vitest suite (safety, risk, scoring, paper accounting) |
+| `pnpm typecheck` | TypeScript strict-mode validation |
 
-```bash
-npm install
-```
-
-### 2. Configure
-
-Copy `.env.example` to `.env`. All values are optional — the system degrades gracefully.
-
-```env
-# Optional: local LLM for scene planning
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=mistral
-
-# Optional: local TTS
-KOKORO_BASE_URL=http://localhost:8880
-
-# Optional: paid providers
-PEXELS_API_KEY=your_key_here
-PIXABAY_API_KEY=your_key_here
-OPENROUTER_API_KEY=your_key_here
-```
-
-### 3. Run
-
-Development (hot reload):
-```bash
-npm run dev
-```
-
-Production:
-```bash
-npm run build
-npm start
-```
+Default `.env` ships with `PAPER_TRADING=true`, `LIVE_TRADING=false`.
+The live path is gated by *multiple* independent flags and runtime checks.
 
 ---
 
-## Provider Fallback Chains
-
-### Scene Planner
-1. **Ollama** (local LLM, e.g. `mistral`) — best output, free, requires Ollama running
-2. **OpenRouter** (cloud, free tier models) — requires `OPENROUTER_API_KEY`
-3. **Deterministic** — always works, no dependencies, hard-codes anti-generic rules
-
-### Visual Assets
-1. **Pexels** — stock video + photo, requires `PEXELS_API_KEY`
-2. **Pixabay** — stock photo, free tier without key
-3. **Generated SVG** — always works, 8 template types, no dependencies
-
-### Text-to-Speech
-1. **Kokoro** (local, OpenAI-compatible API) — run at `localhost:8880`
-2. **Piper** (local subprocess) — if `piper` binary in PATH
-3. **Silent** — renders valid MP4 with estimated timing
-
----
-
-## Setting Up Local Providers
-
-### Ollama (Scene Planning)
-
-```bash
-# Install Ollama: https://ollama.ai
-ollama pull mistral
-ollama serve
-```
-
-The planner sends a structured JSON prompt and validates the response with Zod. Falls through to deterministic splitter if Ollama returns invalid output.
-
-### Kokoro TTS (Narration)
-
-```bash
-# Run Kokoro with its Docker image:
-docker run -p 8880:8880 ghcr.io/remsky/kokoro-fastapi-cpu:latest
-# Or GPU version for faster synthesis
-```
-
-Kokoro exposes an OpenAI-compatible `/v1/audio/speech` endpoint. The system requests WAV output and reads duration directly from the WAV header.
-
-### Piper TTS (Alternative)
-
-```bash
-# Install Piper: https://github.com/rhasspy/piper
-# Download a voice model, then:
-echo "Your text here" | piper --model en_US-lessac-medium --output_file out.wav
-```
-
-Set the voice ID to the model path when using Piper.
-
----
-
-## Plugging In Paid Providers
-
-### Pexels (Stock Video + Photo)
-
-1. Get a free API key at https://www.pexels.com/api/
-2. Add to `.env`: `PEXELS_API_KEY=your_key`
-3. Stock video and portrait photos are now used when `visualMode` is `stockVideo` or `stockImage`
-
-### Pixabay (Stock Photo)
-
-1. Register at https://pixabay.com/api/docs/
-2. Add to `.env`: `PIXABAY_API_KEY=your_key`
-3. Used as fallback when Pexels is unavailable or mode is image-only
-
-### OpenRouter (Cloud LLM Planning)
-
-1. Get a key at https://openrouter.ai
-2. Add to `.env`: `OPENROUTER_API_KEY=your_key`
-3. Default model: `mistralai/mistral-7b-instruct:free` (free tier)
-4. Override: `OPENROUTER_MODEL=anthropic/claude-3-haiku` (paid)
-
----
-
-## Style Presets
-
-| ID | Tone | Caption | Motion | Use for |
-|---|---|---|---|---|
-| `dark_cinematic` | intense, filmic | phrase_slide | ken_burns | drama, thriller, mystery |
-| `documentary` | measured, factual | karaoke | drift | explainers, history |
-| `internet_mystery` | conspiratorial | word_pop | zoom_in | "you won't believe" content |
-| `finance_news` | sharp, urgent | typewriter | static | markets, news, data |
-| `horror_story` | dread, slow burn | phrase_slide | drift | horror, creepypasta |
-| `motivational` | energetic, bold | word_pop | zoom_in | self-improvement, sports |
-| `sports_commentary` | high energy | karaoke | ken_burns | sports, highlights |
-
-Each preset differs in caption animation, motion style, transition, color palette, and pacing rules. The system enforces at least 3 distinct visual modes across any video rendered with these presets.
-
----
-
-## Anti-Generic Safeguards
-
-The system actively rejects low-quality, repetitive output:
-
-**Hard errors** (trigger retry/fallback):
-- Any visual mode used in >60% of scenes
-- Search terms on the generic blocklist (`"nature"`, `"city"`, `"people"`, etc.)
-- Fewer than 3 distinct visual roles across all scenes
-
-**Warnings** (shown in UI, non-fatal):
-- Consecutive scenes sharing the same mode and search terms
-- All scenes with identical pacing
-
-The deterministic fallback hard-codes diversity: round-robin visual modes, position-based visual roles, alternating pacing patterns.
-
----
-
-## Architecture
+## How the pipeline works
 
 ```
-Browser (React/Vite)
-  └── POST /api/plan          → generateScenes() → [Ollama|OpenRouter|Deterministic]
-  └── POST /api/resolve-visuals → resolveVisual() → [Pexels|Pixabay|Generated SVG]
-  └── POST /api/synthesize    → synthesizeScenes() → [Kokoro|Piper|Silent]
-  └── POST /api/render        → starts Remotion renderMedia() in background
-  └── GET  /api/render/:id/status  → SSE progress stream
-  └── GET  /api/download/:id  → streams MP4
-  └── GET  /api/download/:id/srt → generates + streams SRT
-
-Node Server (Express)
-  └── All API keys read from process.env (never sent to client)
-  └── File cache: /tmp/sfv-cache/{plans,visuals,audio}
-
-Remotion Renderer (server-side)
-  └── bundle() → creates webpack bundle of src/remotion/Root.tsx
-  └── renderMedia() → spawns Chromium workers, renders 30fps frames
-  └── Codec: H.264, 1080×1920, output to /tmp/sfv-output/{jobId}.mp4
+  ┌──────────────┐   ┌────────────┐   ┌──────────────┐   ┌──────────────┐
+  │  Scanners    │──▶│   Scoring  │──▶│  Strategies  │──▶│ Master Score │
+  │ (token/X/    │   │ (safety/   │   │ (cluster/    │   │ + Risk Gate  │
+  │  wallet/news)│   │  buzz/event│   │  pumpfun/    │   │              │
+  │              │   │  narrative)│   │  migration…) │   │              │
+  └──────────────┘   └────────────┘   └──────────────┘   └──────┬───────┘
+                                                                 │
+                              ┌──────────────────────────────────┘
+                              ▼
+                    ┌────────────────────┐      ┌──────────────────┐
+                    │  Paper Trader      │◀────▶│   Exit Manager   │
+                    │  Live Trader       │      │  (stops/trails/  │
+                    │  (Jupiter Executor)│      │   emergency)     │
+                    └────────────────────┘      └──────────────────┘
 ```
 
-**No MediaRecorder.** The render is fully server-side. Duration is exact.
+Every accepted **and** rejected token writes a row to the DB explaining *why*
+in plain English plus the full score breakdown.
 
 ---
 
-## Sample Script
+## Wallet tracking (`smartWalletScore`)
 
-The sample below produces a valid MP4 with the `documentary` preset and zero API keys:
+Tracks public Solana wallets that have shown realised PnL, repeatable cross-token
+profits, sane hold times, and survival across regimes. Wallets are scored 0–100 and
+**labelled** (`ELITE_COPYABLE`, `INSIDER_LIKELY`, `DEV_WALLET_LIKELY`,
+`SNIPER_BOT`, `TOO_FAST_TO_COPY`, …). A single elite wallet entering a token is
+**not** enough to live-buy; a *cluster* of unrelated elite wallets, plus volume
++ liquidity + safety, is.
 
-```
-In 1969, NASA landed humans on the moon using computers less powerful than a modern calculator.
+Penalties: tokens received directly from deployer; bot-like sniper patterns;
+suspicious funding chains; one-off large wins; high variance; copy-impossible
+liquidity.
 
-The Apollo Guidance Computer had just 4 kilobytes of RAM and ran at 0.043 MHz. Your smartphone is literally a million times more powerful.
+## X / social monitoring (`x.ts`, `socialScanner`, `buzzScore`)
 
-But here's the thing nobody talks about: it wasn't the hardware that got them there. It was the software — 145,000 lines of hand-coded assembly, written mostly by women.
+Listens (via X API v2) for cashtags, contract addresses, and curated phrases
+(`"official coin"`, `"CA:"`, `"Raydium"`, `"migration"`…). Buzz score weights:
+post velocity, mention acceleration, account credibility, engagement velocity,
+duplicate-spam ratio, and bot-like ratio. **Buzz alone never triggers a live
+buy** — it must be confirmed by an on-chain CA, Jupiter quote, liquidity, and
+volume acceleration.
 
-Margaret Hamilton, the lead developer, coined the term "software engineering" to give her team's work the respect it deserved.
+## Official events (`newsScanner`, `eventScore`, `officialAnnouncementStrategy`)
 
-The code was so reliable it had zero crashes during the entire mission. Zero. That's a standard we still haven't matched today.
-```
+Verifies celebrity / political / brand / project launches against:
+official account → contract address in post → same CA on DexScreener / Birdeye
+→ Jupiter route exists → liquidity passes → holder concentration sane.
+Verified launches allow **paper buy** immediately and **tiny live buy** only if
+all risk filters pass and `LIVE_TRADING=true`.
 
-Expected output: 4–6 scenes, ~55–65 seconds, varied visual modes (gradientMotionCard, evidenceCard, textCard, quoteCard), readable captions, valid MP4.
+## Pump.fun / bonding curve (`pumpfunScanner`, `pumpfunBondingCurveStrategy`)
+
+Tracks new launches, curve progress, organic buyer growth, deployer reputation,
+and migration readiness. Live launchpad trading is gated *additionally* by
+`ENABLE_LIVE_LAUNCHPAD_TRADING=false` (default off).
+
+## Migration tracking (`migrationScanner`, `migrationStrategy`)
+
+Watches for tokens graduating to Raydium / PumpSwap, new Jupiter routes
+appearing, and post-migration volume / liquidity confirmation.
+
+## Narrative rotation (`narrativeScore`, `narrativeRotationStrategy`)
+
+Tracks active narratives (political, celebrity, animal, AI, sports, gaming,
+exchange-listing, ecosystem, migration, viral). Used as **supporting
+confirmation only**, never as a sole trigger.
+
+## Too-late rejection
+
+Possibly the single most important module. Rejects already-exhausted tokens:
+parabolic moves with no consolidation, social peaking and declining, smart
+wallets selling, buy/sell ratio weakening, late-retail-only posters.
 
 ---
 
-## What Was Removed (vs the Failed Prototype)
+## Reading the dashboard
 
-The previous prototype used **browser MediaRecorder** to capture a canvas. This approach was discarded entirely because:
+Run `pnpm paper` in one terminal. The CLI dashboard shows:
 
-1. **Timing drift**: MediaRecorder captures real-time. If the browser renders a frame late (garbage collection, tab switching, CPU spike), that lag is baked into the video. A 60-second video could render as 58 or 64 seconds.
-2. **No server control**: The browser can't read audio files from disk, can't run ffmpeg, can't produce reliable H.264.
-3. **Tab-dependent**: The tab had to stay open and in focus during export. Any interruption corrupted the output.
-4. **No real captions**: Browser canvas `fillText` can't produce the animated, styled, synced captions Remotion achieves.
-
-**Replacement**: Remotion `renderMedia()` runs in Node.js, spawns headless Chromium workers, renders every frame deterministically, and produces a standards-compliant H.264 MP4 with exact duration.
+- **System**: mode, wallet balance, kill-switch status, RPC latency, daily PnL
+- **Signals**: new tokens, elite-wallet buys, X buzz leaders, narrative leaders
+- **Trading**: open paper/live trades, recent closes, **rejected trades with
+  reasons**, emergency exits, cooldown state
+- **Wallets**: top 25 tracked wallets, labels, latest trades, score deltas
 
 ---
 
-## File Structure
+## Enabling live trading (deliberately fiddly)
+
+This is intentionally annoying. Read every step.
+
+1. Run `pnpm paper` for at least several days. Examine `daily_reports` and
+   `closed_positions` in the DB. Confirm **positive expectancy** across a
+   meaningful sample. If paper isn't profitable, live won't be either.
+2. Review every entry in `rejected_trades` — make sure the bot is rejecting
+   tokens you would have rejected manually.
+3. Drop a fresh keypair JSON into `keys/`, give it ≤ a small SOL amount you can
+   afford to lose, and `chmod 600` the file.
+4. Lower `MAX_TRADE_SOL` to a tiny figure (e.g. `0.01`) until you trust the
+   stack.
+5. Set `LIVE_TRADING=true` and `PAPER_TRADING=false`.
+6. Run `pnpm live`. The bot prints a multi-line warning and re-validates every
+   gate before each trade.
+7. Keep `STOP_BOT.txt` ready to drop in the project root — its presence
+   immediately halts new entries and triggers exit-manager review.
+
+---
+
+## Common failure modes (read before going live)
+
+- **Fake contract address.** Scammers post lookalikes. Verified-launch logic
+  helps but isn't infallible — verify CAs against multiple official sources.
+- **Late entry.** Most retail-visible signals are already exhausted. The
+  too-late module rejects many of these; some still slip through.
+- **Insider / dev wallet.** A "smart wallet" with three giant wins may simply
+  be the deployer. `smartWalletScore` penalises deployer-chain funding.
+- **Botted social buzz.** Mention spikes can be cheap to manufacture. Buzz
+  needs verified-account weighting and CA confirmation to count.
+- **Liquidity disappears.** LP rugs are silent — `liquidityScanner` and the
+  exit manager watch for drains and trigger emergency exits.
+- **Jupiter route fails / API delay.** Quote freshness is validated; missing
+  routes aborts the trade.
+- **Copy trade too late.** If an elite wallet bought 30s ago and the price
+  already moved 25%, the trade is rejected.
+- **Celebrity dumps post-hype.** Verified launches require fast partial
+  profits and aggressive trailing stops.
+- **Launchpad rugs.** Live launchpad trading is off by default for a reason.
+- **Market-regime change.** Strategies that worked last month die. Periodically
+  re-run the backtester and re-evaluate score thresholds.
+- **Paid DexScreener boost.** A boost without volume / unique buyers / smart
+  wallet activity is labelled `PAID_BOOST_NO_CONFIRMATION` and ignored.
+- **Crowded smart wallet.** Once a wallet is widely copied, its edge erodes.
+  Rotate the watch list and recompute scores regularly.
+
+---
+
+## Project layout
 
 ```
 src/
-├── lib/validation/schemas.ts      # All Zod schemas — single source of truth
-├── lib/validation/antiGeneric.ts  # Originality enforcement
-├── lib/styleProfiles/             # 7 built-in style presets
-├── lib/planner/                   # Scene planning (Ollama → OpenRouter → Deterministic)
-├── lib/assets/                    # Visual resolution (Pexels → Pixabay → SVG)
-├── lib/tts/                       # TTS (Kokoro → Piper → Silent)
-├── lib/captions/                  # Caption timing + SRT export
-├── lib/cache/                     # File-based cache (MD5 key, TTL)
-├── remotion/                      # Remotion compositions (1080×1920, 30fps)
-│   ├── Root.tsx
-│   ├── ShortFormVideo.tsx
-│   ├── scenes/                    # VideoScene, ImageScene, MotionCardScene, etc.
-│   └── captions/CaptionLayer.tsx
-├── server/                        # Express API server
-│   ├── routes/                    # plan, assets, tts, render, download, styles
-│   └── render/remotionRender.ts   # bundle() + renderMedia()
-├── api/client.ts                  # Typed fetch wrappers (client-side)
-└── components/                    # React UI components
+  config.ts            # env parsing + invariants
+  types.ts             # shared types
+  index.ts             # entrypoint / mode dispatcher
+  adapters/            # external API clients
+  scanners/            # discovery sources
+  scoring/             # 0–100 score modules
+  strategies/          # combine signals into actionable recs
+  execution/           # paper + live + exit + jupiter execution
+  risk/                # risk manager, kill switch, position sizing
+  db/                  # schema + better-sqlite3 wrapper
+  dashboard/           # CLI dashboard
+  backtest/            # historical replay
+  tests/               # vitest unit tests
 ```
+
+---
+
+## What this framework cannot do
+
+- It cannot guarantee profit.
+- It cannot detect every honeypot or rug — only the on-chain heuristics it has
+  access to.
+- It cannot verify offline real-world identities. "Verified launch" means
+  *cryptographic + multi-source* verification of the post + CA, not personal
+  identity.
+- It cannot replace human judgment in fast-moving markets. The dashboard is
+  designed for **human-in-the-loop** monitoring.
+
+---
+
+## Status / what still needs human review
+
+This is a **framework**. Several modules deliberately ship as
+production-shaped scaffolding rather than fully tuned production code:
+
+- Strategy thresholds (in `scoring/*` and `strategies/*`) are reasonable
+  starting values; they require backtest tuning per regime.
+- Smart-wallet seed list is empty — you must populate `watched_wallets` with
+  candidates before tracking is useful.
+- The pumpfun scanner uses public on-chain heuristics; precise program-account
+  parsing should be reviewed against the latest pump.fun program.
+- The X account credibility list is configurable; a curated seed list is
+  required.
+- `liveTrader.ts` performs full risk-gate validation but should be reviewed
+  end-to-end before any real-money use.
+
+See *Riskiest parts of the system* in `docs/RISKS.md` (created on first run).
+
+---
+
+## Why we don't implement certain things
+
+This framework intentionally **does not** include sandwich attacks,
+front-running, spam, wash trading, market manipulation, or detection-evasion
+tooling. Those activities harm other market participants, are unethical, and
+in many jurisdictions illegal. Our edge — if any — comes from rejection
+quality and risk control, not from extracting value from other traders.
