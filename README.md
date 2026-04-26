@@ -32,7 +32,17 @@ With no API keys set, the system uses:
 
 ### Demo / dry-run mode
 
-Set `DEMO_MODE=1` to force every paid path off — deterministic planner, no Pexels/Pixabay/Openverse calls, silent TTS. Use this for end-to-end pipeline tests without spending API credits.
+Forces every paid path off — deterministic planner, no Pexels/Pixabay/Openverse calls, silent TTS. Use this for end-to-end pipeline tests without spending API credits.
+
+```bash
+npm run dev:demo
+```
+
+That works on macOS, Linux, and Windows (via `cross-env`). If you'd rather set the env var by hand:
+
+- macOS / Linux: `DEMO_MODE=1 npm run dev`
+- Windows cmd: `set DEMO_MODE=1 && npm run dev`
+- Windows PowerShell: `$env:DEMO_MODE="1"; npm run dev`
 
 ---
 
