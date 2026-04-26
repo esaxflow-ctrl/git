@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -79,8 +80,9 @@ class FlowDetector:
         # In-memory cache of last known positions per wallet
         # {wallet_address: {condition_id: {outcome: {"shares": float, "usd": float}}}}
         self._position_cache: dict[str, dict[str, dict[str, dict]]] = {}
-        # Market info cache
-        self._market_cache: dict[str, dict] = {}
+        # Market info cache: {condition_id: (info_dict, fetched_at_timestamp)}
+        self._market_cache: dict[str, tuple[dict, float]] = {}
+        self._market_cache_ttl: float = 300.0  # 5 minutes
 
     # ── Public API ────────────────────────────────────────────────────────────
 
@@ -200,33 +202,67 @@ class FlowDetector:
         return trades
 
     async def _get_market_info(self, condition_id: str) -> dict:
-        if condition_id in self._market_cache:
-            return self._market_cache[condition_id]
+        now = time.monotonic()
+        cached = self._market_cache.get(condition_id)
+        if cached is not None:
+            info, fetched_at = cached
+            if now - fetched_at < self._market_cache_ttl:
+                return info
+
         try:
             market = await self.gamma.get_market(condition_id)
             if market:
-                yes_price = float(market.get("outcomePrices", [0.5])[0] or 0.5)
+                prices = market.get("outcomePrices", [0.5, 0.5])
+                yes_price = float(prices[0] or 0.5) if prices else 0.5
+
+                # Extract token IDs so we can fetch real spread from CLOB
+                tokens = market.get("clobTokenIds", market.get("tokens", []))
+                yes_token_id = ""
+                if isinstance(tokens, list) and len(tokens) >= 1:
+                    yes_token_id = str(tokens[0]) if tokens[0] else ""
+                elif isinstance(tokens, list) and tokens and isinstance(tokens[0], dict):
+                    for tok in tokens:
+                        if tok.get("outcome", "").upper() in ("YES", "1"):
+                            yes_token_id = tok.get("token_id", "")
+                            break
+
+                # Fetch real spread from CLOB if we have a token_id
+                spread = 0.03
+                if yes_token_id:
+                    try:
+                        ob = await self.clob.get_orderbook_summary(yes_token_id)
+                        spread = ob.get("spread", 0.03)
+                        # Also use CLOB mid as a more accurate price
+                        clob_mid = ob.get("mid", 0.0)
+                        if 0.01 <= clob_mid <= 0.99:
+                            yes_price = clob_mid
+                    except Exception:
+                        pass
+
                 info = {
                     "question": market.get("question", ""),
                     "category": market.get("category", ""),
                     "yes_price": yes_price,
-                    "spread": 0.03,
+                    "yes_token_id": yes_token_id,
+                    "spread": spread,
                     "liquidity_usd": float(market.get("liquidity", 0) or 0),
                     "volume_24h_usd": float(market.get("volume24hr", market.get("volume", 0)) or 0),
                 }
-                self._market_cache[condition_id] = info
+                self._market_cache[condition_id] = (info, now)
                 return info
         except Exception as exc:
             log.debug("_get_market_info %s: %s", condition_id, exc)
+
         default = {
             "question": f"Market {condition_id[:12]}",
             "category": "unknown",
             "yes_price": 0.5,
+            "yes_token_id": "",
             "spread": 0.05,
             "liquidity_usd": 0.0,
             "volume_24h_usd": 0.0,
         }
-        self._market_cache[condition_id] = default
+        self._market_cache[condition_id] = (default, now)
         return default
 
     def _annotate_clusters(self, trades: list[DetectedTrade]) -> list[DetectedTrade]:

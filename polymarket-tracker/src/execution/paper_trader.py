@@ -126,3 +126,14 @@ class PaperTrader:
                 select(PaperTradeDB).where(PaperTradeDB.status == "open")
             )
             return result.scalars().all()
+
+    async def get_closed_trades(self, limit: int = 50) -> list[PaperTradeDB]:
+        from sqlalchemy import desc
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(PaperTradeDB)
+                .where(PaperTradeDB.status.in_(["closed", "resolved"]))
+                .order_by(desc(PaperTradeDB.exited_at))
+                .limit(limit)
+            )
+            return result.scalars().all()

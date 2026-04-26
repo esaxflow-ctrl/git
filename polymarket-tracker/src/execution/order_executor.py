@@ -105,7 +105,7 @@ class OrderExecutor:
                 db.add(trade_record)
                 await db.commit()
 
-            log.info("Order submitted: %s %s @ %.4f (${:.2f}) → id=%s", side, outcome, price, size_usd, order_id)
+            log.info("Order submitted: %s %s @ %.4f ($%.2f) → id=%s", side, outcome, price, size_usd, order_id)
 
             # Check fill status
             filled = await self._poll_fill(client, order_id)

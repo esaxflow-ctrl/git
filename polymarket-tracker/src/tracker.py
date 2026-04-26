@@ -23,7 +23,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, and_
 
 from src.api.gamma_client import GammaClient
 from src.api.clob_client import ClobClient
@@ -82,6 +82,7 @@ class Tracker:
             self._poll_loop(),
             self._wallet_refresh_loop(),
             self._backtest_loop(),
+            self._resolution_loop(),
         )
 
     def stop(self) -> None:
@@ -113,6 +114,14 @@ class Tracker:
                 await self.backtester.update_open_alerts()
             except Exception as exc:
                 log.error("Backtest update error: %s", exc, exc_info=True)
+
+    async def _resolution_loop(self) -> None:
+        while self._running:
+            await asyncio.sleep(900)  # every 15 minutes
+            try:
+                await self._check_resolved_markets()
+            except Exception as exc:
+                log.error("Resolution check error: %s", exc, exc_info=True)
 
     # ── Core scan ─────────────────────────────────────────────────────────────
 
@@ -190,11 +199,17 @@ class Tracker:
             signal.score >= settings.min_signal_score_auto
             and trade.wallet_sharp_score >= settings.min_wallet_sharp_score_auto
         ):
+            # Look up token_id for the correct outcome side
+            token_id = await self._get_token_id(trade.condition_id, trade.outcome)
+            if not token_id:
+                log.warning("No token_id found for %s %s — skipping live order", trade.condition_id[:12], trade.outcome)
+                return
+
             log.info("Auto-executing alert %d ($%.2f)", alert_id, risk.adjusted_size_usd)
             await self.order_executor.place_limit_order(
                 alert_id=alert_id,
                 condition_id=trade.condition_id,
-                token_id="",  # populated from market data lookup in real use
+                token_id=token_id,
                 outcome=trade.outcome,
                 side="BUY",
                 price=trade.current_market_price,
@@ -306,7 +321,122 @@ class Tracker:
                     row.volume_24h_usd = float(m.get("volume24hr", m.get("volume", 0)) or 0)
                     row.last_updated = datetime.now(timezone.utc)
 
+                    # Extract token IDs for CLOB order placement
+                    tokens = m.get("clobTokenIds", m.get("tokens", []))
+                    if isinstance(tokens, list) and len(tokens) >= 1:
+                        row.yes_token_id = str(tokens[0]) if tokens[0] else row.yes_token_id
+                    if isinstance(tokens, list) and len(tokens) >= 2:
+                        row.no_token_id = str(tokens[1]) if tokens[1] else row.no_token_id
+                    # Handle dict-style token objects
+                    if isinstance(tokens, list) and tokens and isinstance(tokens[0], dict):
+                        for tok in tokens:
+                            outcome = tok.get("outcome", "").upper()
+                            if outcome in ("YES", "1"):
+                                row.yes_token_id = tok.get("token_id", row.yes_token_id)
+                            elif outcome in ("NO", "2"):
+                                row.no_token_id = tok.get("token_id", row.no_token_id)
+
+                    # End date and resolution status
+                    end_date_str = m.get("endDate") or m.get("end_date_iso") or m.get("end")
+                    if end_date_str:
+                        try:
+                            from datetime import timezone as _tz
+                            import dateutil.parser as _dp
+                            row.end_date = _dp.parse(end_date_str).astimezone(_tz.utc).replace(tzinfo=None)
+                        except Exception:
+                            pass
+
+                    if m.get("resolved") or m.get("isResolved"):
+                        row.is_resolved = True
+                        row.is_closed = True
+                    elif m.get("closed") or m.get("isClosed"):
+                        row.is_closed = True
+
                 await db.commit()
 
         except Exception as exc:
             log.error("_refresh_markets: %s", exc, exc_info=True)
+
+    async def _check_resolved_markets(self) -> None:
+        """Detect newly resolved markets and close out paper trades / backtest records."""
+        now = datetime.now(timezone.utc)
+        async with SessionLocal() as db:
+            stmt = select(MarketDB).where(
+                and_(
+                    MarketDB.is_resolved == False,
+                    MarketDB.is_closed == False,
+                    MarketDB.end_date != None,
+                    MarketDB.end_date <= now,
+                )
+            ).limit(50)
+            result = await db.execute(stmt)
+            candidates = result.scalars().all()
+
+        if not candidates:
+            return
+
+        log.info("Checking %d markets past end_date for resolution", len(candidates))
+        for market in candidates:
+            try:
+                data = await self.gamma.get_market(market.condition_id)
+                if not data:
+                    continue
+                resolved = data.get("resolved", False) or data.get("isResolved", False)
+                if not resolved:
+                    continue
+
+                # Determine resolution price (YES = 1.0, NO = 0.0)
+                resolution_outcome = (data.get("resolutionOutcome") or "").upper()
+                winners = data.get("winners", [])
+                if resolution_outcome == "YES" or "YES" in winners:
+                    resolution_price = 1.0
+                elif resolution_outcome == "NO" or "NO" in winners:
+                    resolution_price = 0.0
+                else:
+                    prices = data.get("outcomePrices", [])
+                    resolution_price = float(prices[0]) if prices else 0.5
+
+                log.info(
+                    "Market resolved: %s → %.0f (%.60s)",
+                    market.condition_id[:16],
+                    resolution_price,
+                    market.question,
+                )
+
+                # Close paper trades and fill backtest resolution price
+                await self.paper_trader.mark_resolved(market.condition_id, resolution_price)
+                await self.backtester.mark_resolved(market.condition_id, resolution_price)
+
+                # Mark market as resolved in DB
+                async with SessionLocal() as db:
+                    stmt = select(MarketDB).where(MarketDB.condition_id == market.condition_id)
+                    row = (await db.execute(stmt)).scalar_one_or_none()
+                    if row:
+                        row.is_resolved = True
+                        row.is_closed = True
+                        await db.commit()
+
+            except Exception as exc:
+                log.warning("_check_resolved_markets %s: %s", market.condition_id[:12], exc)
+
+    async def _get_token_id(self, condition_id: str, outcome: str) -> str:
+        """Return the CLOB token_id for a given market outcome."""
+        async with SessionLocal() as db:
+            stmt = select(MarketDB).where(MarketDB.condition_id == condition_id)
+            row = (await db.execute(stmt)).scalar_one_or_none()
+        if row:
+            if outcome.upper() in ("YES", "1"):
+                return row.yes_token_id or ""
+            return row.no_token_id or ""
+        # Fallback: fetch live from gamma
+        try:
+            m = await self.gamma.get_market(condition_id)
+            if m:
+                tokens = m.get("clobTokenIds", m.get("tokens", []))
+                if isinstance(tokens, list) and outcome.upper() in ("NO", "2") and len(tokens) >= 2:
+                    return str(tokens[1])
+                if isinstance(tokens, list) and len(tokens) >= 1:
+                    return str(tokens[0])
+        except Exception:
+            pass
+        return ""

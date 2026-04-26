@@ -217,9 +217,11 @@ async function loadPaper() {
     <div class="summary-card"><div class="val">${s.total_trades || 0}</div><div class="lbl">Total Trades</div></div>
     <div class="summary-card"><div class="val">${s.open || 0}</div><div class="lbl">Open</div></div>
     <div class="summary-card"><div class="val">${s.closed || 0}</div><div class="lbl">Closed</div></div>
-    <div class="summary-card"><div class="val ${s.total_pnl_usd >= 0 ? 'pnl-pos' : 'pnl-neg'}">${s.total_pnl_usd >= 0 ? '+' : ''}${fmt_usd(s.total_pnl_usd)}</div><div class="lbl">Total PnL</div></div>
+    <div class="summary-card"><div class="val ${(s.total_pnl_usd||0) >= 0 ? 'pnl-pos' : 'pnl-neg'}">${(s.total_pnl_usd||0) >= 0 ? '+' : ''}${fmt_usd(s.total_pnl_usd)}</div><div class="lbl">Total PnL</div></div>
     <div class="summary-card"><div class="val">${fmt_pct(s.win_rate_pct)}</div><div class="lbl">Win Rate</div></div>
-    <div class="summary-card"><div class="val ${s.avg_pnl_usd >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt_usd(s.avg_pnl_usd)}</div><div class="lbl">Avg PnL</div></div>
+    <div class="summary-card"><div class="val ${(s.avg_pnl_usd||0) >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt_usd(s.avg_pnl_usd)}</div><div class="lbl">Avg PnL</div></div>
+    <div class="summary-card"><div class="val pnl-pos">${fmt_usd(s.best_trade_usd)}</div><div class="lbl">Best Trade</div></div>
+    <div class="summary-card"><div class="val pnl-neg">${fmt_usd(s.worst_trade_usd)}</div><div class="lbl">Worst Trade</div></div>
   `;
 
   const tbody = document.getElementById('paper-tbody');
@@ -235,9 +237,33 @@ async function loadPaper() {
     `;
     tbody.appendChild(tr);
   });
+
+  const closedTbody = document.getElementById('paper-closed-tbody');
+  closedTbody.innerHTML = '';
+  (data.closed_trades || []).forEach(t => {
+    const tr = document.createElement('tr');
+    const pnlClass = t.pnl_usd == null ? '' : t.pnl_usd > 0 ? 'pnl-pos' : t.pnl_usd < 0 ? 'pnl-neg' : '';
+    tr.innerHTML = `
+      <td>${esc(t.condition_id.slice(0,20))}…</td>
+      <td>${esc(t.outcome)}</td>
+      <td>${fmt_p(t.entry_price)}</td>
+      <td>${t.exit_price != null ? fmt_p(t.exit_price) : '—'}</td>
+      <td>${fmt_usd(t.size_usd)}</td>
+      <td class="${pnlClass}">${t.pnl_usd != null ? (t.pnl_usd >= 0 ? '+' : '') + fmt_usd(t.pnl_usd) : '—'}</td>
+      <td class="${pnlClass}">${t.pnl_pct != null ? (t.pnl_pct >= 0 ? '+' : '') + t.pnl_pct.toFixed(1) + '%' : '—'}</td>
+      <td>${esc(t.status)}</td>
+      <td>${fmt_ts(t.exited_at)}</td>
+    `;
+    closedTbody.appendChild(tr);
+  });
 }
 
 // ── Backtest ──────────────────────────────────────────────────────────────────
+function pnl_cell(v) {
+  if (v == null) return '—';
+  return `<span class="${pnl_class(v)}">${v > 0 ? '+' : ''}${v}%</span>`;
+}
+
 async function loadBacktest() {
   const data = await api('/api/backtest');
   const s = data;
@@ -245,19 +271,76 @@ async function loadBacktest() {
   document.getElementById('backtest-summary').innerHTML = `
     <div class="summary-card"><div class="val">${s.total_alerts || 0}</div><div class="lbl">Total Alerts</div></div>
     <div class="summary-card"><div class="val">${s.alerts_with_data || 0}</div><div class="lbl">With Data</div></div>
-    <div class="summary-card"><div class="val ${pnl_class(s.avg_pnl_5m_pct)}">${s.avg_pnl_5m_pct != null ? (s.avg_pnl_5m_pct > 0 ? '+' : '') + s.avg_pnl_5m_pct + '%' : '—'}</div><div class="lbl">Avg PnL +5m</div></div>
-    <div class="summary-card"><div class="val ${pnl_class(s.avg_pnl_30m_pct)}">${s.avg_pnl_30m_pct != null ? (s.avg_pnl_30m_pct > 0 ? '+' : '') + s.avg_pnl_30m_pct + '%' : '—'}</div><div class="lbl">Avg PnL +30m</div></div>
-    <div class="summary-card"><div class="val ${pnl_class(s.avg_pnl_2h_pct)}">${s.avg_pnl_2h_pct != null ? (s.avg_pnl_2h_pct > 0 ? '+' : '') + s.avg_pnl_2h_pct + '%' : '—'}</div><div class="lbl">Avg PnL +2h</div></div>
-    <div class="summary-card"><div class="val ${pnl_class(s.avg_pnl_24h_pct)}">${s.avg_pnl_24h_pct != null ? (s.avg_pnl_24h_pct > 0 ? '+' : '') + s.avg_pnl_24h_pct + '%' : '—'}</div><div class="lbl">Avg PnL +24h</div></div>
+    <div class="summary-card"><div class="val ${pnl_class(s.avg_pnl_5m_pct)}">${pnl_cell(s.avg_pnl_5m_pct)}</div><div class="lbl">Avg PnL +5m</div></div>
+    <div class="summary-card"><div class="val ${pnl_class(s.avg_pnl_30m_pct)}">${pnl_cell(s.avg_pnl_30m_pct)}</div><div class="lbl">Avg PnL +30m</div></div>
+    <div class="summary-card"><div class="val ${pnl_class(s.avg_pnl_2h_pct)}">${pnl_cell(s.avg_pnl_2h_pct)}</div><div class="lbl">Avg PnL +2h</div></div>
+    <div class="summary-card"><div class="val ${pnl_class(s.avg_pnl_24h_pct)}">${pnl_cell(s.avg_pnl_24h_pct)}</div><div class="lbl">Avg PnL +24h</div></div>
+    <div class="summary-card"><div class="val">${s.win_rate_24h_pct != null ? s.win_rate_24h_pct + '%' : '—'}</div><div class="lbl">Win Rate +24h</div></div>
+    <div class="summary-card"><div class="val">${s.win_rate_res_pct != null ? s.win_rate_res_pct + '%' : '—'}</div><div class="lbl">Win Rate Res</div></div>
   `;
+
+  // By action breakdown
+  const byAction = s.by_action || {};
+  if (Object.keys(byAction).length > 0) {
+    let actionHtml = '<h3 style="margin:20px 0 10px">By Action Type</h3><table class="data-table"><thead><tr><th>Action</th><th>#</th><th>Avg +30m</th><th>Avg +2h</th><th>Avg +24h</th><th>Avg Res</th><th>WR 24h</th><th>WR Res</th></tr></thead><tbody>';
+    for (const [action, g] of Object.entries(byAction)) {
+      actionHtml += `<tr>
+        <td><span class="action-tag ${esc(action)}">${esc(action)}</span></td>
+        <td>${g.count}</td>
+        <td>${pnl_cell(g.avg_pnl_30m_pct)}</td>
+        <td>${pnl_cell(g.avg_pnl_2h_pct)}</td>
+        <td>${pnl_cell(g.avg_pnl_24h_pct)}</td>
+        <td>${pnl_cell(g.avg_pnl_res_pct)}</td>
+        <td>${g.win_rate_24h_pct != null ? g.win_rate_24h_pct + '%' : '—'}</td>
+        <td>${g.win_rate_res_pct != null ? g.win_rate_res_pct + '%' : '—'}</td>
+      </tr>`;
+    }
+    actionHtml += '</tbody></table>';
+    document.getElementById('backtest-summary').insertAdjacentHTML('afterend', actionHtml.replace('id="backtest-action-table"', '') );
+    // Use a dedicated container
+    let actionEl = document.getElementById('backtest-by-action');
+    if (!actionEl) {
+      actionEl = document.createElement('div');
+      actionEl.id = 'backtest-by-action';
+      document.getElementById('backtest-summary').after(actionEl);
+    }
+    actionEl.innerHTML = actionHtml;
+  }
+
+  // By score range breakdown
+  const byScore = s.by_score_range || {};
+  if (Object.keys(byScore).length > 0) {
+    let scoreHtml = '<h3 style="margin:20px 0 10px">By Signal Score Range</h3><table class="data-table"><thead><tr><th>Score Range</th><th>#</th><th>Avg +30m</th><th>Avg +2h</th><th>Avg +24h</th><th>WR 24h</th><th>WR Res</th></tr></thead><tbody>';
+    for (const [range, g] of Object.entries(byScore)) {
+      if (g.count === 0) continue;
+      scoreHtml += `<tr>
+        <td>${esc(range)}</td>
+        <td>${g.count}</td>
+        <td>${pnl_cell(g.avg_pnl_30m_pct)}</td>
+        <td>${pnl_cell(g.avg_pnl_2h_pct)}</td>
+        <td>${pnl_cell(g.avg_pnl_24h_pct)}</td>
+        <td>${g.win_rate_24h_pct != null ? g.win_rate_24h_pct + '%' : '—'}</td>
+        <td>${g.win_rate_res_pct != null ? g.win_rate_res_pct + '%' : '—'}</td>
+      </tr>`;
+    }
+    scoreHtml += '</tbody></table>';
+    let scoreEl = document.getElementById('backtest-by-score');
+    if (!scoreEl) {
+      scoreEl = document.createElement('div');
+      scoreEl.id = 'backtest-by-score';
+      const actionEl = document.getElementById('backtest-by-action');
+      if (actionEl) actionEl.after(scoreEl);
+      else document.getElementById('backtest-summary').after(scoreEl);
+    }
+    scoreEl.innerHTML = scoreHtml;
+  }
 
   const tbody = document.getElementById('backtest-tbody');
   tbody.innerHTML = '';
   (s.rows || []).forEach(r => {
     const tr = document.createElement('tr');
-    const pc = label => r[`pnl_${label}_pct`];
     const cell = label => {
-      const v = pc(label);
+      const v = r[`pnl_${label}_pct`];
       if (v == null) return '<td class="neu">—</td>';
       return `<td class="${v > 0 ? 'pnl-pos' : v < 0 ? 'pnl-neg' : ''}">${v > 0 ? '+' : ''}${v}%</td>`;
     };

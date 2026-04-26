@@ -123,19 +123,60 @@ class Backtester:
         if not rows:
             return {"total_alerts": 0, "rows": []}
 
-        # Aggregate
-        def avg_pnl(label: str) -> Optional[float]:
-            vals = [r[f"pnl_{label}_pct"] for r in rows if f"pnl_{label}_pct" in r]
+        # Aggregate helpers
+        def avg_pnl(subset: list[dict], label: str) -> Optional[float]:
+            vals = [r[f"pnl_{label}_pct"] for r in subset if f"pnl_{label}_pct" in r]
             return round(sum(vals) / len(vals), 2) if vals else None
+
+        def win_rate(subset: list[dict], label: str) -> Optional[float]:
+            vals = [r[f"pnl_{label}_pct"] for r in subset if f"pnl_{label}_pct" in r]
+            if not vals:
+                return None
+            return round(sum(1 for v in vals if v > 0) / len(vals) * 100, 1)
+
+        def group_stats(subset: list[dict]) -> dict:
+            return {
+                "count": len(subset),
+                "avg_pnl_5m_pct":  avg_pnl(subset, "5m"),
+                "avg_pnl_30m_pct": avg_pnl(subset, "30m"),
+                "avg_pnl_2h_pct":  avg_pnl(subset, "2h"),
+                "avg_pnl_24h_pct": avg_pnl(subset, "24h"),
+                "avg_pnl_res_pct": avg_pnl(subset, "res"),
+                "win_rate_24h_pct": win_rate(subset, "24h"),
+                "win_rate_res_pct": win_rate(subset, "res"),
+            }
+
+        # By action type
+        actions = sorted({r["action"] for r in rows})
+        by_action = {
+            action: group_stats([r for r in rows if r["action"] == action])
+            for action in actions
+        }
+
+        # By signal score bucket
+        score_buckets = [
+            ("40-49", 40, 50),
+            ("50-64", 50, 65),
+            ("65-79", 65, 80),
+            ("80+",   80, 101),
+        ]
+        by_score = {
+            label: group_stats([r for r in rows if lo <= r["signal_score"] < hi])
+            for label, lo, hi in score_buckets
+        }
 
         return {
             "total_alerts": len(alerts),
             "alerts_with_data": len(rows),
-            "avg_pnl_5m_pct": avg_pnl("5m"),
-            "avg_pnl_30m_pct": avg_pnl("30m"),
-            "avg_pnl_2h_pct": avg_pnl("2h"),
-            "avg_pnl_24h_pct": avg_pnl("24h"),
-            "avg_pnl_res_pct": avg_pnl("res"),
+            "avg_pnl_5m_pct":  avg_pnl(rows, "5m"),
+            "avg_pnl_30m_pct": avg_pnl(rows, "30m"),
+            "avg_pnl_2h_pct":  avg_pnl(rows, "2h"),
+            "avg_pnl_24h_pct": avg_pnl(rows, "24h"),
+            "avg_pnl_res_pct": avg_pnl(rows, "res"),
+            "win_rate_24h_pct": win_rate(rows, "24h"),
+            "win_rate_res_pct": win_rate(rows, "res"),
+            "by_action": by_action,
+            "by_score_range": by_score,
             "rows": rows,
         }
 

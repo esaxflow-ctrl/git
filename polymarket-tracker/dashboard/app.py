@@ -239,6 +239,7 @@ async def list_markets(
 async def list_paper_trades():
     summary = await _paper_trader.get_summary()
     open_trades = await _paper_trader.get_open_trades()
+    closed_trades = await _paper_trader.get_closed_trades()
     return {
         "summary": summary,
         "open_trades": [
@@ -252,6 +253,22 @@ async def list_paper_trades():
             }
             for t in open_trades
         ],
+        "closed_trades": [
+            {
+                "id": t.id,
+                "condition_id": t.condition_id,
+                "outcome": t.outcome,
+                "entry_price": round(t.entry_price, 4),
+                "exit_price": round(t.exit_price, 4) if t.exit_price else None,
+                "size_usd": round(t.size_usd, 2),
+                "pnl_usd": round(t.pnl_usd, 2) if t.pnl_usd is not None else None,
+                "pnl_pct": round(t.pnl_pct, 2) if t.pnl_pct is not None else None,
+                "status": t.status,
+                "entered_at": t.entered_at.isoformat(),
+                "exited_at": t.exited_at.isoformat() if t.exited_at else None,
+            }
+            for t in closed_trades
+        ],
     }
 
 
@@ -263,11 +280,11 @@ async def get_backtest():
 @app.get("/api/stats")
 async def get_stats():
     async with SessionLocal() as db:
-        n_wallets = (await db.execute(func.count(WalletDB.id))).scalar()
+        n_wallets = (await db.execute(select(func.count(WalletDB.id)))).scalar()
         n_sharp = (await db.execute(
             select(func.count(WalletDB.id)).where(WalletDB.sharp_score >= 60)
         )).scalar()
-        n_alerts = (await db.execute(func.count(AlertDB.id))).scalar()
+        n_alerts = (await db.execute(select(func.count(AlertDB.id)))).scalar()
         n_high = (await db.execute(
             select(func.count(AlertDB.id)).where(AlertDB.signal_score >= 65)
         )).scalar()
