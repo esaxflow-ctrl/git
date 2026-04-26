@@ -264,13 +264,15 @@ class Tracker:
         log.info("Wallet refresh complete")
 
     async def _discover_wallets_from_markets(self) -> list[dict]:
-        """Fallback wallet discovery: pull position holders from top markets."""
+        """Fallback wallet discovery: extract addresses from CLOB trades on top markets."""
         async with SessionLocal() as db:
             result = await db.execute(
                 select(MarketDB)
                 .where(MarketDB.is_closed == False)
+                .where(MarketDB.yes_token_id.isnot(None))
+                .where(MarketDB.yes_token_id != "")
                 .order_by(MarketDB.volume_24h_usd.desc())
-                .limit(40)
+                .limit(30)
             )
             markets = result.scalars().all()
 
@@ -278,35 +280,25 @@ class Tracker:
         entries: list[dict] = []
 
         for market in markets:
+            token_id = market.yes_token_id or ""
+            if not token_id:
+                continue
             try:
-                holders = await self.data.get_market_holders(market.condition_id)
-                for h in holders[:20]:
-                    addr = (
-                        h.get("proxyWallet") or h.get("address") or h.get("user") or ""
-                    ).lower()
-                    if addr and len(addr) >= 10 and addr not in seen:
-                        seen.add(addr)
-                        entries.append({"address": addr, **h})
-            except Exception as exc:
-                log.debug("market_holders %s: %s", market.condition_id[:12], exc)
-            if len(entries) >= 300:
-                break
-            await asyncio.sleep(0.1)
-
-        # Also try fetching recent CLOB trades to find active wallets
-        if len(entries) < 50:
-            try:
-                trades = await self.clob.get_trades(limit=200)
+                trades = await self.clob.get_trades(market=token_id, limit=500)
                 for t in trades:
-                    for key in ("maker_address", "taker_address", "makerAddress", "takerAddress"):
+                    for key in ("owner", "maker_address", "taker_address", "makerAddress", "takerAddress"):
                         addr = (t.get(key) or "").lower()
                         if addr and len(addr) >= 10 and addr not in seen:
                             seen.add(addr)
                             entries.append({"address": addr})
             except Exception as exc:
-                log.debug("clob trades discovery: %s", exc)
+                log.debug("clob_trades %s: %s", token_id[:16], exc)
 
-        log.info("Market-holder discovery found %d unique wallets", len(entries))
+            if len(entries) >= 500:
+                break
+            await asyncio.sleep(0.1)
+
+        log.info("CLOB-trade discovery found %d unique wallet addresses", len(entries))
         return entries
 
     async def _upsert_wallet(self, address: str, leaderboard_entry: dict) -> None:
@@ -385,12 +377,13 @@ class Tracker:
                     row.last_updated = datetime.now(timezone.utc)
 
                     # Extract token IDs for CLOB order placement
+                    import json as _json
                     tokens = m.get("clobTokenIds", m.get("tokens", []))
-                    if isinstance(tokens, list) and len(tokens) >= 1:
-                        row.yes_token_id = str(tokens[0]) if tokens[0] else row.yes_token_id
-                    if isinstance(tokens, list) and len(tokens) >= 2:
-                        row.no_token_id = str(tokens[1]) if tokens[1] else row.no_token_id
-                    # Handle dict-style token objects
+                    if isinstance(tokens, str):
+                        try:
+                            tokens = _json.loads(tokens)
+                        except Exception:
+                            tokens = []
                     if isinstance(tokens, list) and tokens and isinstance(tokens[0], dict):
                         for tok in tokens:
                             outcome = tok.get("outcome", "").upper()
@@ -398,6 +391,11 @@ class Tracker:
                                 row.yes_token_id = tok.get("token_id", row.yes_token_id)
                             elif outcome in ("NO", "2"):
                                 row.no_token_id = tok.get("token_id", row.no_token_id)
+                    else:
+                        if isinstance(tokens, list) and len(tokens) >= 1:
+                            row.yes_token_id = str(tokens[0]) if tokens[0] else row.yes_token_id
+                        if isinstance(tokens, list) and len(tokens) >= 2:
+                            row.no_token_id = str(tokens[1]) if tokens[1] else row.no_token_id
 
                     # End date and resolution status
                     end_date_str = m.get("endDate") or m.get("end_date_iso") or m.get("end")
