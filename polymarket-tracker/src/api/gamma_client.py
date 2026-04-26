@@ -132,24 +132,6 @@ class GammaClient:
             log.warning("get_positions %s: %s", user, exc)
             return []
 
-    async def get_market_positions(self, condition_id: str, limit: int = 200) -> list[dict]:
-        """Get all position holders for a market — used for wallet discovery."""
-        for params in [
-            {"conditionId": condition_id, "limit": limit},
-            {"market": condition_id, "limit": limit},
-        ]:
-            try:
-                data = await self._get("/positions", params=params)
-                if isinstance(data, list) and data:
-                    return data
-                if isinstance(data, dict):
-                    rows = data.get("positions", data.get("data", []))
-                    if rows:
-                        return rows
-            except Exception:
-                continue
-        return []
-
     async def get_all_positions(self, user: str) -> list[dict]:
         all_pos: list[dict] = []
         for page in range(20):

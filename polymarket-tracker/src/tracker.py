@@ -297,28 +297,36 @@ class Tracker:
         for rpc_url in RPC_ENDPOINTS:
             try:
                 async with _aiohttp.ClientSession() as session:
-                    # Step 1: get latest block number
+                    # Get latest block
                     bn_resp = await _rpc(session, rpc_url, "eth_blockNumber", [])
                     latest = int(bn_resp["result"], 16)
-                    # ~2 blocks/sec on Polygon — 5000 blocks ≈ 40 min of trades
-                    from_block = latest - 5000
 
-                    # Step 2: fetch all logs from the CTF contract
-                    logs_resp = await _rpc(session, rpc_url, "eth_getLogs", [{
-                        "address": CTF_CONTRACT,
-                        "fromBlock": hex(from_block),
-                        "toBlock": "latest",
-                    }])
+                    # Query in 2000-block chunks (most public RPCs cap at 2000)
+                    # ~2 blocks/sec on Polygon → 2000 blocks ≈ 17 min of trades
+                    all_logs: list = []
+                    for chunk_start in range(latest - 6000, latest, 2000):
+                        chunk_end = min(chunk_start + 1999, latest)
+                        logs_resp = await _rpc(session, rpc_url, "eth_getLogs", [{
+                            "address": CTF_CONTRACT,
+                            "fromBlock": hex(chunk_start),
+                            "toBlock": hex(chunk_end),
+                        }])
+                        chunk = logs_resp.get("result", [])
+                        if isinstance(chunk, list):
+                            all_logs.extend(chunk)
+                        elif logs_resp.get("error"):
+                            log.debug("Polygon RPC error: %s", logs_resp["error"])
+                            break
 
-                raw_logs = logs_resp.get("result", [])
-                if not isinstance(raw_logs, list):
-                    log.debug("Polygon RPC %s returned non-list: %s", rpc_url, raw_logs)
+                raw_logs = all_logs
+                if not raw_logs:
+                    log.debug("Polygon RPC %s returned 0 logs", rpc_url)
                     continue
 
                 for entry in raw_logs:
-                    for topic in entry.get("topics", [])[1:]:  # topics[0] is event sig
-                        # Ethereum addresses are zero-padded to 32 bytes in topics.
-                        # Pattern: 0x + 24 zero chars + 40 hex addr chars
+                    for topic in entry.get("topics", [])[1:]:  # skip topics[0] = event sig
+                        # Ethereum addresses in topics are zero-padded to 32 bytes.
+                        # Pattern: 0x + 24 zero hex chars + 40-char address
                         if (isinstance(topic, str) and len(topic) == 66
                                 and topic.startswith("0x000000000000000000000000")):
                             addr = "0x" + topic[26:]
@@ -331,7 +339,7 @@ class Tracker:
                     rpc_url, len(raw_logs), len(entries),
                 )
                 if entries:
-                    break  # got results, no need to try next RPC
+                    break  # success — no need to try next RPC
 
             except Exception as exc:
                 log.debug("Polygon RPC %s failed: %s", rpc_url, exc)
