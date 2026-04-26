@@ -12,6 +12,8 @@
  */
 
 import 'dotenv/config';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import chalk from 'chalk';
 import { config } from './config.js';
 import { Db } from './db/database.js';
@@ -265,8 +267,14 @@ function recordRejection(db: Db, signal: MasterSignal, snap: TokenSnapshot, reas
   db.insertRejectedTrade(r);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  main().catch((e) => {
+// Entrypoint check that works on Windows (backslash paths break the naive
+// `file://${process.argv[1]}` comparison). Compare resolved file paths.
+const isMainModule =
+  process.argv[1] !== undefined &&
+  resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
+
+if (isMainModule) {
+  main().catch((e: unknown) => {
     console.error(e);
     process.exit(1);
   });

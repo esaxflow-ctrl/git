@@ -8,6 +8,8 @@
 
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
+import { resolve } from 'node:path';
 import { config } from '../config.js';
 import { Db } from '../db/database.js';
 import { JupiterAdapter } from '../adapters/jupiter.js';
@@ -143,8 +145,12 @@ async function run(): Promise<void> {
   db.close();
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  run().catch((e) => {
+const isMainModule =
+  process.argv[1] !== undefined &&
+  resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
+
+if (isMainModule) {
+  run().catch((e: unknown) => {
     console.error(e);
     process.exit(1);
   });
