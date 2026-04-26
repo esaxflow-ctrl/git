@@ -1,6 +1,5 @@
 import { useCurrentFrame, useVideoConfig, spring, interpolate, Easing } from "remotion";
 import { ScenePlan, StyleProfile } from "../../lib/validation/schemas";
-import crypto from "crypto";
 
 interface Props {
   scene: ScenePlan;
@@ -11,10 +10,20 @@ interface Props {
 // same scene always renders the same variant, and different scenes vary.
 type LayoutVariant = "left_accent" | "bottom_reveal" | "centered_impact";
 
+// Simple non-crypto string hash. Browser-safe (no Node `crypto` dep, which
+// would otherwise blow up Remotion's webpack bundle on Windows).
+function stringHash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
 function pickVariant(sceneId: string): LayoutVariant {
   const variants: LayoutVariant[] = ["left_accent", "bottom_reveal", "centered_impact"];
-  const hash = crypto.createHash("md5").update(sceneId).digest("hex");
-  const idx = parseInt(hash.slice(0, 4), 16) % variants.length;
+  const idx = stringHash(sceneId) % variants.length;
   return variants[idx];
 }
 
