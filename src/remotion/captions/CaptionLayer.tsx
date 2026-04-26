@@ -27,7 +27,12 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
   const activeEntry = active;
 
   const { captionStyle } = style;
-  const { fontFamily, fontSize, color, highlightColor, animation, position, maxWordsPerGroup } = captionStyle;
+  // maxWordsPerGroup is consumed in groupWordTimings; not used here directly.
+  const { fontFamily, fontSize, color, highlightColor, animation, position } = captionStyle;
+
+  // Per-caption local frame so slide-in / typewriter animations replay for
+  // every entry, not just the first one. (Bug fix: was using absolute frame.)
+  const localFrame = Math.max(0, frame - Math.round((activeEntry.startMs / 1000) * fps));
 
   const entryProgress = (currentMs - activeEntry.startMs) / (activeEntry.endMs - activeEntry.startMs);
 
@@ -49,7 +54,7 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
           const clean = word.toLowerCase().replace(/[^a-z]/g, "");
           const isEmphasis = emphasisSet.has(clean);
           const wp = spring({
-            frame: Math.max(0, frame - i * 2),
+            frame: Math.max(0, localFrame - i * 2),
             fps,
             config: { damping: 15, stiffness: 320, mass: 0.45 },
           });
@@ -76,8 +81,8 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
   }
 
   function renderPhraseSlide() {
-    const slideY = interpolate(frame, [0, 10], [24, 0], { extrapolateRight: "clamp" });
-    const opacity = interpolate(frame, [0, 8], [0, 1], { extrapolateRight: "clamp" });
+    const slideY = interpolate(localFrame, [0, 10], [24, 0], { extrapolateRight: "clamp" });
+    const opacity = interpolate(localFrame, [0, 8], [0, 1], { extrapolateRight: "clamp" });
     return (
       <div
         style={{
@@ -143,7 +148,7 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
         }}
       >
         {activeEntry.text.slice(0, charCount)}
-        <span style={{ opacity: Math.round((frame % 28) / 14) }}>|</span>
+        <span style={{ opacity: Math.round((localFrame % 28) / 14) }}>|</span>
       </div>
     );
   }

@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import { v4 as uuidv4 } from "uuid";
 import path from "path";
+import fs from "fs";
 import { RenderRequestSchema, RenderJob, AudioResult } from "../../lib/validation/schemas";
 import { getStyleProfile } from "../../lib/styleProfiles";
 import { renderVideo, buildInputProps } from "../render/remotionRender";
@@ -8,11 +9,19 @@ import { synthesizeScenes } from "../../lib/tts";
 import { exportSRT } from "../../lib/captions/srt";
 import { buildCaptionEntries } from "../../lib/captions";
 import { resolveBackgroundMusic } from "../../lib/music";
+import { validateExport, ExportValidation } from "../render/exportValidator";
+import { buildDebugReport, writeDebugReport, DebugReport } from "../render/debugReport";
 
 const OUTPUT_DIR = process.env.OUTPUT_DIR ?? "/tmp/sfv-output";
 
 // In-memory job store (sufficient for single-user local tool)
 export const jobs = new Map<string, RenderJob>();
+
+// Per-job validation + debug report, keyed alongside `jobs`.
+export const jobReports = new Map<
+  string,
+  { validation: ExportValidation | null; report: DebugReport | null }
+>();
 
 function sendSSE(res: Response, data: object) {
   res.write(`data: ${JSON.stringify(data)}\n\n`);
@@ -94,30 +103,81 @@ renderRouter.post("/", async (req, res) => {
     styleProfile.captionStyle.maxWordsPerGroup
   );
   const srtContent = exportSRT(captionEntries);
-  const fs = await import("fs");
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
   fs.writeFileSync(srtPath, srtContent);
+
+  const reportPath = path.join(OUTPUT_DIR, `${jobId}.report.json`);
 
   // Start render async
   setImmediate(async () => {
     job.status = "bundling";
     job.progressPercent = 0;
 
+    let renderErr: unknown = null;
     try {
       await renderVideo(job, (pct) => {
         job.status = "rendering";
         job.progressPercent = pct;
       });
-      job.status = "done";
-      job.progressPercent = 100;
     } catch (err) {
+      renderErr = err;
       job.status = "error";
-      job.errorMessage = String(err);
+      job.errorMessage = err instanceof Error ? err.message : String(err);
       console.error(`[render:${jobId}] failed:`, err);
     }
+
+    // Validate and write a debug report regardless of success/failure.
+    let validation: ExportValidation | null = null;
+    try {
+      const expected = job.audioResults.reduce((sum, a) => sum + (a.durationMs ?? 0), 0) / 1000;
+      validation = await validateExport(job.outputPath, expected || 60, job.audioEnabled);
+      if (!validation.pass) {
+        console.warn(
+          `[render:${jobId}] export validation failed: ${validation.failures.join("; ")}`
+        );
+      } else {
+        console.info(
+          `[render:${jobId}] export validated: ${validation.durationSeconds?.toFixed(2)}s, ${validation.width}x${validation.height}, audio=${validation.hasAudio}, ${validation.fileSizeBytes} bytes`
+        );
+      }
+    } catch (err) {
+      console.warn(`[render:${jobId}] validation error: ${err}`);
+    }
+
+    if (!renderErr && validation && !validation.pass) {
+      job.status = "error";
+      job.errorMessage = `Export validation failed: ${validation.failures.join("; ")}`;
+    } else if (!renderErr) {
+      job.status = "done";
+      job.progressPercent = 100;
+    }
+
+    const report = buildDebugReport(job, captionEntries.length, validation);
+    writeDebugReport(reportPath, report);
+    jobReports.set(jobId, { validation, report });
   });
 
   res.json({ jobId });
+});
+
+renderRouter.get("/:jobId/report", (req, res) => {
+  const job = jobs.get(req.params.jobId);
+  if (!job) {
+    res.status(404).json({ error: "job_not_found" });
+    return;
+  }
+  const reportPath = path.join(OUTPUT_DIR, `${req.params.jobId}.report.json`);
+  if (!fs.existsSync(reportPath)) {
+    const cached = jobReports.get(req.params.jobId);
+    if (cached?.report) {
+      res.json(cached.report);
+      return;
+    }
+    res.status(404).json({ error: "report_not_ready", status: job.status });
+    return;
+  }
+  res.setHeader("Content-Type", "application/json");
+  fs.createReadStream(reportPath).pipe(res);
 });
 
 renderRouter.get("/:jobId/status", (req, res) => {

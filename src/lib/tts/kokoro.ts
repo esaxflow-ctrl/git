@@ -18,6 +18,56 @@ export async function isKokoroAvailable(): Promise<boolean> {
   }
 }
 
+async function postKokoroWithRetry(
+  text: string,
+  options: VoiceOptions
+): Promise<ArrayBuffer> {
+  const backoffMs = [500, 1500, 4500];
+  let lastError: unknown = null;
+
+  for (let attempt = 0; attempt <= backoffMs.length; attempt++) {
+    try {
+      const res = await fetch(`${KOKORO_BASE_URL}/v1/audio/speech`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "kokoro",
+          input: text,
+          voice: options.voiceId,
+          response_format: "wav",
+          speed: options.speed,
+        }),
+        signal: AbortSignal.timeout(60000),
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`Kokoro ${res.status}: ${body.slice(0, 200)}`);
+      }
+      return await res.arrayBuffer();
+    } catch (err) {
+      lastError = err;
+      const wait = backoffMs[attempt];
+      const summary =
+        err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+      if (wait === undefined) {
+        console.warn(
+          `[tts:kokoro] FAILED after ${attempt + 1} attempts (input ${text.length} chars, voice ${options.voiceId}, speed ${options.speed}): ${summary}`
+        );
+        break;
+      }
+      console.warn(
+        `[tts:kokoro] attempt ${attempt + 1} failed: ${summary}. Retrying in ${wait}ms…`
+      );
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(`Kokoro failed: ${String(lastError)}`);
+}
+
 export async function synthesizeWithKokoro(
   text: string,
   options: VoiceOptions
@@ -32,24 +82,7 @@ export async function synthesizeWithKokoro(
   const outputPath = path.join(AUDIO_CACHE_DIR, `${hash}.wav`);
 
   if (!fs.existsSync(outputPath)) {
-    const res = await fetch(`${KOKORO_BASE_URL}/v1/audio/speech`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "kokoro",
-        input: text,
-        voice: options.voiceId,
-        response_format: "wav",
-        speed: options.speed,
-      }),
-      signal: AbortSignal.timeout(60000),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Kokoro returned ${res.status}: ${await res.text()}`);
-    }
-
-    const buffer = await res.arrayBuffer();
+    const buffer = await postKokoroWithRetry(text, options);
     fs.writeFileSync(outputPath, Buffer.from(buffer));
   }
 

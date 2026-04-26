@@ -7,6 +7,7 @@ import {
 } from "./lib/validation/schemas";
 import { api, QualityReport } from "./api/client";
 import { ScriptInput } from "./components/ScriptInput";
+import { ScriptGeneratorPanel } from "./components/ScriptGeneratorPanel";
 import { ScenePlanEditor } from "./components/ScenePlanEditor";
 import { RenderControls } from "./components/RenderControls";
 import { DownloadPanel } from "./components/DownloadPanel";
@@ -59,6 +60,7 @@ const INITIAL: State = {
 
 export default function App() {
   const [state, setState] = useState<State>(INITIAL);
+  const [prefilledScript, setPrefilledScript] = useState<string>("");
   const sseCleanup = useRef<(() => void) | null>(null);
 
   function patch(partial: Partial<State>) {
@@ -215,10 +217,18 @@ export default function App() {
 
         <Divider />
 
-        {/* Script input */}
+        {/* Script generator (LLM-driven 60s writer) */}
+        <ScriptGeneratorPanel
+          onScriptReady={(s) => setPrefilledScript(s)}
+        />
+
+        <Divider />
+
+        {/* Script input — accepts a pasted or generated script */}
         <ScriptInput
           onGenerate={handleGenerate}
           loading={isPlanning}
+          initialScript={prefilledScript}
         />
 
         {/* Error */}

@@ -5,6 +5,7 @@ import { api } from "../api/client";
 interface Props {
   onGenerate: (script: string, styleId: string) => void;
   loading: boolean;
+  initialScript?: string;
 }
 
 const SAMPLE_SCRIPT = `In 1969, NASA landed humans on the moon using computers less powerful than a modern calculator.
@@ -17,7 +18,7 @@ Margaret Hamilton, the lead developer, coined the term "software engineering" to
 
 The code was so reliable it had zero crashes during the entire mission. Zero. That's a standard we still haven't matched today.`;
 
-export function ScriptInput({ onGenerate, loading }: Props) {
+export function ScriptInput({ onGenerate, loading, initialScript }: Props) {
   const [script, setScript] = useState("");
   const [styleId, setStyleId] = useState("dark_cinematic");
   const [styles, setStyles] = useState<StyleProfile[]>([]);
@@ -25,6 +26,13 @@ export function ScriptInput({ onGenerate, loading }: Props) {
   useEffect(() => {
     api.styles.list().then(setStyles).catch(console.error);
   }, []);
+
+  useEffect(() => {
+    if (initialScript && initialScript !== script) {
+      setScript(initialScript);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialScript]);
 
   const wordCount = script.trim().split(/\s+/).filter(Boolean).length;
   const canGenerate = script.trim().length >= 50 && !loading;

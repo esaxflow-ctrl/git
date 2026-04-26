@@ -9,6 +9,7 @@ import { ttsRouter } from "./routes/tts";
 import { renderRouter } from "./routes/render";
 import { downloadRouter } from "./routes/download";
 import { analyzeRouter } from "./routes/analyze";
+import { scriptRouter } from "./routes/script";
 import { planCache, assetCache, audioCache } from "../lib/cache";
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -22,6 +23,7 @@ app.use(express.json({ limit: "5mb" }));
 // API routes
 app.use("/api/styles", stylesRouter);
 app.use("/api/plan", planRouter);
+app.use("/api/script", scriptRouter);
 app.use("/api", assetsRouter);
 app.use("/api", ttsRouter);
 app.use("/api/render", renderRouter);
@@ -50,7 +52,11 @@ async function start() {
   console.info(`[cache] Evicted ${evicted.reduce((a, b) => a + b, 0)} stale entries`);
 
   app.listen(PORT, () => {
+    const demo = process.env.DEMO_MODE === "1";
     console.info(`[server] Running on http://localhost:${PORT}`);
+    if (demo) {
+      console.info(`[server] DEMO_MODE=1 — paid providers and remote calls are skipped`);
+    }
     console.info(`[server] Pexels API: ${process.env.PEXELS_API_KEY ? "✓" : "✗ (using generated graphics)"}`);
     console.info(`[server] Pixabay API: ${process.env.PIXABAY_API_KEY ? "✓" : "✗"}`);
     console.info(`[server] OpenRouter: ${process.env.OPENROUTER_API_KEY ? "✓" : "✗"}`);

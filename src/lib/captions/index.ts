@@ -84,10 +84,20 @@ export function groupWordTimings(
   return entries;
 }
 
+/**
+ * Build caption entries aligned to the rendered timeline.
+ *
+ * If `sceneDurationsMs` is provided (from the render path's
+ * `computeSceneDurations`), captions use exactly those durations so they
+ * stay synced with what's on screen. Otherwise we fall back to the audio
+ * duration / estimate, which may drift from the rendered timeline if scene
+ * scaling kicks in.
+ */
 export function buildCaptionEntries(
   scenes: ScenePlan[],
   audioResults: AudioResult[],
-  maxWordsPerGroup: number
+  maxWordsPerGroup: number,
+  sceneDurationsMs?: number[]
 ): CaptionEntry[] {
   const allEntries: CaptionEntry[] = [];
   let offsetMs = 0;
@@ -95,23 +105,28 @@ export function buildCaptionEntries(
   for (let i = 0; i < scenes.length; i++) {
     const scene = scenes[i];
     const audio = audioResults[i];
-    const sceneDurationMs = audio?.durationMs ?? estimateSceneDuration(scene);
+    const renderedDurationMs =
+      sceneDurationsMs?.[i] ?? audio?.durationMs ?? estimateSceneDuration(scene);
+    const speechDurationMs = audio?.durationMs ?? renderedDurationMs;
 
     let wordTimings: WordTiming[];
     if (audio?.wordTimings && audio.wordTimings.length > 0) {
-      // Offset existing timings
+      // Real word timings — offset, then clamp into the rendered window.
       wordTimings = audio.wordTimings.map((wt) => ({
         ...wt,
-        startMs: wt.startMs + offsetMs,
-        endMs: wt.endMs + offsetMs,
+        startMs: Math.min(offsetMs + renderedDurationMs, wt.startMs + offsetMs),
+        endMs: Math.min(offsetMs + renderedDurationMs, wt.endMs + offsetMs),
       }));
     } else {
-      wordTimings = estimateWordTimings(scene.narration, sceneDurationMs, offsetMs);
+      // Estimate against the speech length (so words advance at speech pace),
+      // not the rendered window — captions stay in sync with the voice and
+      // simply finish before the scene ends if the scene is padded.
+      wordTimings = estimateWordTimings(scene.narration, speechDurationMs, offsetMs);
     }
 
     const entries = groupWordTimings(wordTimings, maxWordsPerGroup, scene.emphasisWords);
     allEntries.push(...entries);
-    offsetMs += sceneDurationMs;
+    offsetMs += renderedDurationMs;
   }
 
   return allEntries;

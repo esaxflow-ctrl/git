@@ -39,6 +39,14 @@ export async function generateScenes(
   script: string,
   options: PlannerOptions
 ): Promise<PlannerResult> {
+  const demo = process.env.DEMO_MODE === "1";
+
+  if (demo) {
+    console.info("[planner] DEMO_MODE=1 — using deterministic planner only");
+    const scenes = await generateDeterministic(script, options);
+    return { scenes, provider: "deterministic" };
+  }
+
   // Try Ollama first (local, free)
   if (await isOllamaAvailable()) {
     const scenes = await tryProvider(

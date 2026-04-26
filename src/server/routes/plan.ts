@@ -39,7 +39,7 @@ planRouter.post("/", async (req, res) => {
   try {
     const planOptions = {
       style,
-      targetDurationSeconds: options?.targetDurationSeconds ?? 67,
+      targetDurationSeconds: options?.targetDurationSeconds ?? 60,
       minScenes: options?.minScenes ?? 4,
       maxScenes: options?.maxScenes ?? 8,
     };

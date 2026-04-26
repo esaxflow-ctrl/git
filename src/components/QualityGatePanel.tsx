@@ -14,11 +14,13 @@ const GRADE_COLORS: Record<string, string> = {
 };
 
 const DIM_LABELS: Record<string, string> = {
-  visualDiversity: "Visual Diversity",
-  searchTermQuality: "Search Terms",
-  pacingVariety: "Pacing Variety",
-  captionCoverage: "Caption Coverage",
-  audioReadiness: "Audio",
+  hookStrength: "Hook Strength",
+  scriptOriginality: "Script Originality",
+  visualSpecificity: "Visual Specificity",
+  captionReadability: "Caption Readability",
+  voiceoverPacing: "Voiceover Pacing",
+  sceneVariety: "Scene Variety",
+  retentionPotential: "Retention Potential",
 };
 
 function ScoreBar({ label, score }: { label: string; score: number }) {
@@ -73,7 +75,9 @@ export function QualityGatePanel({ report, loading }: Props) {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
         <span style={{ fontSize: 13, fontWeight: 600, color: "#d1d5db" }}>Quality Analysis</span>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span style={{ fontSize: 12, color: "#6b7280" }}>{report.overallScore}/100</span>
+          <span style={{ fontSize: 12, color: "#6b7280" }}>
+            {report.overallScoreOutOf10}/10 · {report.overallScore}/100
+          </span>
           <span
             style={{
               fontSize: 18,
@@ -89,6 +93,22 @@ export function QualityGatePanel({ report, loading }: Props) {
           </span>
         </div>
       </div>
+
+      {/* Revisions needed (under-8/10 dimensions) */}
+      {report.revisionsNeeded.length > 0 && report.overallScoreOutOf10 < 8 && (
+        <div
+          style={{
+            fontSize: 11,
+            color: "#fbbf24",
+            background: "#1f1500",
+            border: "1px solid #7c5e00",
+            borderRadius: 6,
+            padding: "6px 10px",
+          }}
+        >
+          Below 8/10 — revise: {report.revisionsNeeded.join(", ")}
+        </div>
+      )}
 
       {/* Dimension scores */}
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>

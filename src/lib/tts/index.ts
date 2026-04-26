@@ -61,8 +61,11 @@ export async function synthesizeScenes(
   };
 
   let provider: TtsProvider = "silent";
+  const demo = process.env.DEMO_MODE === "1";
 
-  if (await isKokoroAvailable()) {
+  if (demo) {
+    console.info("[tts] DEMO_MODE=1 — forcing silent fallback");
+  } else if (await isKokoroAvailable()) {
     provider = "kokoro";
   } else if (isPiperAvailable()) {
     provider = "piper";

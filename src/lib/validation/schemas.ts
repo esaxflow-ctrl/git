@@ -219,7 +219,7 @@ export type ShortFormVideoProps = z.infer<typeof ShortFormVideoPropsSchema>;
 
 export const PlannerOptionsSchema = z.object({
   style: StyleProfileSchema,
-  targetDurationSeconds: z.number().min(30).max(120).default(67),
+  targetDurationSeconds: z.number().min(30).max(120).default(60),
   minScenes: z.number().min(2).max(4).default(4),
   maxScenes: z.number().min(4).max(12).default(8),
 });

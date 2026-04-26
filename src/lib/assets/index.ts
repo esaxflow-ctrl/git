@@ -30,8 +30,9 @@ export async function resolveVisual(
   const needsGenerated = !needsVideo && !needsPhoto;
 
   let asset: VisualAsset | null = null;
+  const demo = process.env.DEMO_MODE === "1";
 
-  if (!needsGenerated) {
+  if (!needsGenerated && !demo) {
     // 1. Pexels — video OR image, requires API key
     if (process.env.PEXELS_API_KEY) {
       asset = await tryProvider("pexels", () => fetchFromPexels(scene));
