@@ -41,6 +41,8 @@ class GammaClient:
                     if resp.status == 429:
                         await asyncio.sleep(2 ** attempt)
                         continue
+                    if resp.status == 422:
+                        return None  # malformed ID — don't retry
                     resp.raise_for_status()
                     return await resp.json()
             except aiohttp.ClientError as exc:

@@ -19,6 +19,8 @@ from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select as _sa_select
+
 from src.api.gamma_client import GammaClient
 from src.api.clob_client import ClobClient
 from src.api.data_client import DataClient
@@ -208,6 +210,27 @@ class FlowDetector:
             info, fetched_at = cached
             if now - fetched_at < self._market_cache_ttl:
                 return info
+
+        # Check local DB first — avoids redundant API calls for already-loaded markets
+        try:
+            async with SessionLocal() as db:
+                row = (await db.execute(
+                    _sa_select(MarketDB).where(MarketDB.condition_id == condition_id)
+                )).scalar_one_or_none()
+            if row:
+                info = {
+                    "question": row.question or "",
+                    "category": row.category or "unknown",
+                    "yes_price": row.yes_price or 0.5,
+                    "yes_token_id": row.yes_token_id or "",
+                    "spread": row.spread or 0.03,
+                    "liquidity_usd": row.liquidity_usd or 0.0,
+                    "volume_24h_usd": row.volume_24h_usd or 0.0,
+                }
+                self._market_cache[condition_id] = (info, now)
+                return info
+        except Exception:
+            pass
 
         try:
             market = await self.gamma.get_market(condition_id)
