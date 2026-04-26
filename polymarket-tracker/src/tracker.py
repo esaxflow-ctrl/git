@@ -280,30 +280,27 @@ class Tracker:
         entries: list[dict] = []
 
         for market in markets:
-            token_id = market.yes_token_id or ""
-            if not token_id:
-                continue
             try:
-                # CLOB accepts token_id param; also try market as fallback
-                trades = await self.clob.get_trades(market=token_id, limit=500)
-                if not trades:
-                    trades = await self.clob.get_trades_by_token(token_id, limit=500)
-                for t in trades:
-                    for key in ("owner", "maker_address", "taker_address", "makerAddress", "takerAddress"):
-                        addr = (t.get(key) or "").lower()
-                        if addr and len(addr) >= 10 and addr not in seen:
-                            seen.add(addr)
-                            entries.append({"address": addr})
-                if trades:
-                    log.debug("Token %s → %d trades, %d wallets so far", token_id[:16], len(trades), len(entries))
+                positions = await self.gamma.get_market_positions(market.condition_id, limit=200)
+                for pos in positions:
+                    addr = (
+                        pos.get("proxyWallet") or pos.get("user") or
+                        pos.get("address") or pos.get("userId") or ""
+                    ).lower()
+                    if addr and len(addr) >= 10 and addr not in seen:
+                        seen.add(addr)
+                        entries.append({"address": addr})
+                if positions:
+                    log.debug("Market %s → %d positions, %d wallets so far",
+                              market.condition_id[:16], len(positions), len(entries))
             except Exception as exc:
-                log.debug("clob_trades %s: %s", token_id[:16], exc)
+                log.debug("market_positions %s: %s", market.condition_id[:16], exc)
 
             if len(entries) >= 500:
                 break
             await asyncio.sleep(0.1)
 
-        log.info("CLOB-trade discovery found %d unique wallet addresses", len(entries))
+        log.info("Market-position discovery found %d unique wallet addresses", len(entries))
         return entries
 
     async def _upsert_wallet(self, address: str, leaderboard_entry: dict) -> None:

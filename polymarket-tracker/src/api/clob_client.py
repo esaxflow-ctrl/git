@@ -37,6 +37,8 @@ class ClobClient:
         for attempt in range(3):
             try:
                 async with session.get(url, params=params) as resp:
+                    if resp.status == 401:
+                        return None  # auth required — don't retry
                     if resp.status == 429:
                         await asyncio.sleep(2 ** attempt)
                         continue
