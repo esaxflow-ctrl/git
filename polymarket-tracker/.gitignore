@@ -1,0 +1,19 @@
+# Never commit live credentials or DB
+.env
+*.db
+*.db-shm
+*.db-wal
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+
+# Logs
+alerts.jsonl
+*.log

@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Polymarket Informed-Flow Tracker</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <div class="header-inner">
+      <span class="logo">⚡ Informed-Flow Tracker</span>
+      <div class="header-stats" id="header-stats">
+        <span class="stat-pill" id="hs-wallets">— wallets</span>
+        <span class="stat-pill" id="hs-alerts">— alerts</span>
+        <span class="stat-pill" id="hs-pnl">Paper PnL —</span>
+        <span class="live-dot" id="live-dot" title="SSE connected"></span>
+      </div>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab active" data-tab="alerts">Alerts</button>
+    <button class="tab" data-tab="wallets">Sharp Wallets</button>
+    <button class="tab" data-tab="markets">Markets</button>
+    <button class="tab" data-tab="paper">Paper Trades</button>
+    <button class="tab" data-tab="backtest">Backtest</button>
+  </nav>
+
+  <!-- ── ALERTS ── -->
+  <section class="tab-content active" id="tab-alerts">
+    <div class="toolbar">
+      <label>Min signal score
+        <input type="range" id="alert-min-score" min="0" max="100" value="40" />
+        <span id="alert-min-score-val">40</span>
+      </label>
+      <label>Action
+        <select id="alert-action-filter">
+          <option value="">All</option>
+          <option value="MANUAL_APPROVAL">MANUAL APPROVAL</option>
+          <option value="STRONG_WATCH">STRONG WATCH</option>
+          <option value="SMALL_TAIL">SMALL TAIL</option>
+          <option value="WATCH">WATCH</option>
+        </select>
+      </label>
+      <button class="btn" onclick="loadAlerts()">Refresh</button>
+    </div>
+    <div id="alerts-container" class="card-grid"></div>
+  </section>
+
+  <!-- ── WALLETS ── -->
+  <section class="tab-content" id="tab-wallets">
+    <div class="toolbar">
+      <label>Min sharp score
+        <input type="range" id="wallet-min-score" min="0" max="100" value="30" />
+        <span id="wallet-min-score-val">30</span>
+      </label>
+      <button class="btn" onclick="loadWallets()">Refresh</button>
+    </div>
+    <table class="data-table" id="wallets-table">
+      <thead>
+        <tr>
+          <th>Wallet</th>
+          <th>Sharp Score</th>
+          <th>Total PnL</th>
+          <th>ROI</th>
+          <th>Resolved</th>
+          <th>Win Rate</th>
+          <th>Avg Size</th>
+          <th>Last Scored</th>
+        </tr>
+      </thead>
+      <tbody id="wallets-tbody"></tbody>
+    </table>
+  </section>
+
+  <!-- ── MARKETS ── -->
+  <section class="tab-content" id="tab-markets">
+    <div class="toolbar">
+      <label><input type="checkbox" id="sharp-only-filter" /> Sharp wallet activity only</label>
+      <button class="btn" onclick="loadMarkets()">Refresh</button>
+    </div>
+    <table class="data-table" id="markets-table">
+      <thead>
+        <tr>
+          <th>Market</th>
+          <th>Category</th>
+          <th>YES Price</th>
+          <th>Liquidity</th>
+          <th>Volume 24h</th>
+          <th>Sharp Wallets</th>
+        </tr>
+      </thead>
+      <tbody id="markets-tbody"></tbody>
+    </table>
+  </section>
+
+  <!-- ── PAPER TRADES ── -->
+  <section class="tab-content" id="tab-paper">
+    <div id="paper-summary" class="summary-grid"></div>
+    <h3>Open Paper Trades</h3>
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Market</th>
+          <th>Outcome</th>
+          <th>Entry Price</th>
+          <th>Size USD</th>
+          <th>Entered</th>
+        </tr>
+      </thead>
+      <tbody id="paper-tbody"></tbody>
+    </table>
+  </section>
+
+  <!-- ── BACKTEST ── -->
+  <section class="tab-content" id="tab-backtest">
+    <div id="backtest-summary" class="summary-grid"></div>
+    <h3>Alert Outcomes</h3>
+    <table class="data-table" id="backtest-table">
+      <thead>
+        <tr>
+          <th>Market</th>
+          <th>Outcome</th>
+          <th>Signal</th>
+          <th>Entry</th>
+          <th>+5m</th>
+          <th>+30m</th>
+          <th>+2h</th>
+          <th>+24h</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="backtest-tbody"></tbody>
+    </table>
+  </section>
+
+  <!-- ── ALERT DETAIL MODAL ── -->
+  <div id="modal-overlay" class="modal-overlay hidden" onclick="closeModal()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <button class="modal-close" onclick="closeModal()">✕</button>
+      <pre id="modal-text"></pre>
+      <div class="modal-actions" id="modal-actions"></div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
