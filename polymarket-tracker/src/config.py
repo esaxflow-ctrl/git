@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     gamma_api_base: str = "https://gamma-api.polymarket.com"
     clob_api_base: str = "https://clob.polymarket.com"
     data_api_base: str = "https://data-api.polymarket.com"
-    leaderboard_api_base: str = "https://leaderboard-api.polymarket.com"
+    leaderboard_api_base: str = "https://data-api.polymarket.com"
     strapi_api_base: str = "https://polymarket-api.polymarket.com"
 
     class Config:

@@ -125,15 +125,17 @@ class DataClient:
     ) -> list[dict]:
         """Primary leaderboard endpoint — tries several known URLs in order."""
         params = {"window": window, "limit": limit, "offset": offset, "sortBy": sort_by}
-        candidates = [
-            (_LB_BASE,   "/portfolio-leaderboard"),
-            (_DATA_BASE, "/leaderboard"),
-            (_DATA_BASE, "/portfolio-leaderboard"),
-            (_LB_BASE,   "/leaderboard"),
+        # Try multiple known endpoint / parameter combinations
+        attempts = [
+            (_DATA_BASE, "/leaderboard",            {"limit": limit, "offset": offset}),
+            (_DATA_BASE, "/leaderboard",            {"limit": limit, "offset": offset, "window": "allTime"}),
+            (_DATA_BASE, "/leaderboard",            params),
+            (_DATA_BASE, "/portfolio-leaderboard",  params),
+            (_LB_BASE,   "/portfolio-leaderboard",  params),
         ]
-        for base, path in candidates:
+        for base, path, p in attempts:
             try:
-                data = await self._get(base, path, params=params)
+                data = await self._get(base, path, params=p)
                 if data is None:
                     continue
                 if isinstance(data, list) and data:
