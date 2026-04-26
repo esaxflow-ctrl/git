@@ -84,11 +84,11 @@ class Tracker:
         log.info("Starting tracker (mode=%s, poll=%ds)", settings.execution_mode, settings.tracker_poll_interval_seconds)
         self._running = True
 
+        # Markets must load before wallet discovery (token IDs needed for CLOB trade lookup)
+        await self._refresh_markets()
+
         # Initial wallet load
         await self._refresh_wallets()
-
-        # Initial market snapshot
-        await self._refresh_markets()
 
         # Run all loops concurrently
         await asyncio.gather(
@@ -284,13 +284,18 @@ class Tracker:
             if not token_id:
                 continue
             try:
+                # CLOB accepts token_id param; also try market as fallback
                 trades = await self.clob.get_trades(market=token_id, limit=500)
+                if not trades:
+                    trades = await self.clob.get_trades_by_token(token_id, limit=500)
                 for t in trades:
                     for key in ("owner", "maker_address", "taker_address", "makerAddress", "takerAddress"):
                         addr = (t.get(key) or "").lower()
                         if addr and len(addr) >= 10 and addr not in seen:
                             seen.add(addr)
                             entries.append({"address": addr})
+                if trades:
+                    log.debug("Token %s → %d trades, %d wallets so far", token_id[:16], len(trades), len(entries))
             except Exception as exc:
                 log.debug("clob_trades %s: %s", token_id[:16], exc)
 

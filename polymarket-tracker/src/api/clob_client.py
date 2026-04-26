@@ -171,6 +171,17 @@ class ClobClient:
             log.warning("get_trades: %s", exc)
             return []
 
+    async def get_trades_by_token(self, token_id: str, limit: int = 500) -> list[dict]:
+        """Fetch trades for a specific CLOB token using the token_id param."""
+        try:
+            data = await self._get("/trades", params={"token_id": token_id, "limit": limit})
+            if isinstance(data, list):
+                return data
+            return data.get("data", []) if isinstance(data, dict) else []
+        except Exception as exc:
+            log.warning("get_trades_by_token %s: %s", token_id[:16], exc)
+            return []
+
     async def get_user_trades(self, address: str, limit: int = 200) -> list[dict]:
         """Get all trades for a wallet (maker or taker)."""
         maker = await self.get_trades(maker_address=address, limit=limit)
