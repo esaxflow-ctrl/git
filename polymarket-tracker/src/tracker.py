@@ -264,43 +264,61 @@ class Tracker:
         log.info("Wallet refresh complete")
 
     async def _discover_wallets_from_markets(self) -> list[dict]:
-        """Fallback wallet discovery: extract addresses from CLOB trades on top markets."""
-        async with SessionLocal() as db:
-            result = await db.execute(
-                select(MarketDB)
-                .where(MarketDB.is_closed == False)
-                .where(MarketDB.yes_token_id.isnot(None))
-                .where(MarketDB.yes_token_id != "")
-                .order_by(MarketDB.volume_24h_usd.desc())
-                .limit(30)
-            )
-            markets = result.scalars().all()
-
+        """Fallback wallet discovery: try several public API endpoints for wallet addresses."""
         seen: set[str] = set()
         entries: list[dict] = []
 
-        for market in markets:
+        def _extract(rows: list) -> None:
+            for row in rows:
+                addr = (
+                    row.get("proxyWallet") or row.get("user") or
+                    row.get("address") or row.get("userId") or
+                    row.get("maker") or ""
+                ).lower()
+                if addr and len(addr) >= 10 and addr not in seen:
+                    seen.add(addr)
+                    entries.append({"address": addr})
+
+        # Attempt 1: Data API global positions (no user filter)
+        for params in [
+            {"sizeThreshold": 10, "limit": 500},
+            {"limit": 500},
+        ]:
             try:
-                positions = await self.gamma.get_market_positions(market.condition_id, limit=200)
-                for pos in positions:
-                    addr = (
-                        pos.get("proxyWallet") or pos.get("user") or
-                        pos.get("address") or pos.get("userId") or ""
-                    ).lower()
-                    if addr and len(addr) >= 10 and addr not in seen:
-                        seen.add(addr)
-                        entries.append({"address": addr})
-                if positions:
-                    log.debug("Market %s → %d positions, %d wallets so far",
-                              market.condition_id[:16], len(positions), len(entries))
-            except Exception as exc:
-                log.debug("market_positions %s: %s", market.condition_id[:16], exc)
+                data = await self.data._get(self.data._DATA_BASE, "/positions", params=params)
+                rows = data if isinstance(data, list) else (data or {}).get("positions", (data or {}).get("data", []))
+                if rows:
+                    _extract(rows)
+                    log.info("Data API /positions (no user) → %d addresses", len(entries))
+                    break
+            except Exception:
+                pass
 
-            if len(entries) >= 500:
-                break
-            await asyncio.sleep(0.1)
+        # Attempt 2: Data API recent activity (no user filter)
+        if len(entries) < 50:
+            for params in [{"limit": 500}, {"limit": 200, "type": "TRADE"}]:
+                try:
+                    data = await self.data._get(self.data._DATA_BASE, "/activity", params=params)
+                    rows = data if isinstance(data, list) else (data or {}).get("activity", (data or {}).get("data", []))
+                    if rows:
+                        _extract(rows)
+                        log.info("Data API /activity (no user) → %d addresses", len(entries))
+                        break
+                except Exception:
+                    pass
 
-        log.info("Market-position discovery found %d unique wallet addresses", len(entries))
+        # Attempt 3: Gamma positions with no user filter
+        if len(entries) < 50:
+            try:
+                data = await self.gamma._get("/positions", params={"limit": 500, "sizeThreshold": 10})
+                rows = data if isinstance(data, list) else (data or {}).get("positions", [])
+                if rows:
+                    _extract(rows)
+                    log.info("Gamma /positions (no user) → %d addresses", len(entries))
+            except Exception:
+                pass
+
+        log.info("Wallet discovery found %d unique addresses (manual seeding may be needed if 0)", len(entries))
         return entries
 
     async def _upsert_wallet(self, address: str, leaderboard_entry: dict) -> None:

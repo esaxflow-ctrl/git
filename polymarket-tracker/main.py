@@ -49,6 +49,10 @@ def parse_args() -> argparse.Namespace:
     s = sub.add_parser("score-wallet", help="Score a single wallet address")
     s.add_argument("address", help="Wallet address (0x…)")
 
+    # add-wallet — manually add a wallet to track
+    aw = sub.add_parser("add-wallet", help="Manually add a wallet address to track")
+    aw.add_argument("address", help="Wallet proxy address from polymarket.com/profile/<address>")
+
     # backtest — print backtest summary
     sub.add_parser("backtest", help="Print backtest summary from DB")
 
@@ -139,6 +143,19 @@ async def score_wallet(address: str) -> None:
     await data.close()
 
 
+async def add_wallet(address: str) -> None:
+    from src.database import init_db
+    from src.tracker import Tracker
+    await init_db()
+    t = Tracker()
+    await t._refresh_markets()
+    log.info("Scoring wallet %s …", address)
+    await t._upsert_wallet(address.lower(), {"address": address.lower()})
+    log.info("Done — wallet saved. Restart the tracker to begin monitoring it.")
+    await t.gamma.close()
+    await t.data.close()
+
+
 async def print_backtest() -> None:
     from src.database import init_db
     from src.api.gamma_client import GammaClient
@@ -172,6 +189,8 @@ def main() -> None:
         asyncio.run(run_all(getattr(args, "mode", None), getattr(args, "host", None), getattr(args, "port", None)))
     elif args.command == "score-wallet":
         asyncio.run(score_wallet(args.address))
+    elif args.command == "add-wallet":
+        asyncio.run(add_wallet(args.address))
     elif args.command == "backtest":
         asyncio.run(print_backtest())
 
