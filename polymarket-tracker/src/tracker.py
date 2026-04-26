@@ -242,6 +242,10 @@ class Tracker:
             log.warning("Leaderboard returned no data — trying gamma endpoint")
             entries = await self.gamma.get_leaderboard()
 
+        if not entries:
+            log.warning("All leaderboard endpoints failed — discovering wallets from market holders")
+            entries = await self._discover_wallets_from_markets()
+
         log.info("Fetched %d leaderboard entries", len(entries))
 
         for entry in entries:
@@ -258,6 +262,52 @@ class Tracker:
 
         self._last_wallet_refresh = datetime.now(timezone.utc)
         log.info("Wallet refresh complete")
+
+    async def _discover_wallets_from_markets(self) -> list[dict]:
+        """Fallback wallet discovery: pull position holders from top markets."""
+        async with SessionLocal() as db:
+            result = await db.execute(
+                select(MarketDB)
+                .where(MarketDB.is_closed == False)
+                .order_by(MarketDB.volume_24h_usd.desc())
+                .limit(40)
+            )
+            markets = result.scalars().all()
+
+        seen: set[str] = set()
+        entries: list[dict] = []
+
+        for market in markets:
+            try:
+                holders = await self.data.get_market_holders(market.condition_id)
+                for h in holders[:20]:
+                    addr = (
+                        h.get("proxyWallet") or h.get("address") or h.get("user") or ""
+                    ).lower()
+                    if addr and len(addr) >= 10 and addr not in seen:
+                        seen.add(addr)
+                        entries.append({"address": addr, **h})
+            except Exception as exc:
+                log.debug("market_holders %s: %s", market.condition_id[:12], exc)
+            if len(entries) >= 300:
+                break
+            await asyncio.sleep(0.1)
+
+        # Also try fetching recent CLOB trades to find active wallets
+        if len(entries) < 50:
+            try:
+                trades = await self.clob.get_trades(limit=200)
+                for t in trades:
+                    for key in ("maker_address", "taker_address", "makerAddress", "takerAddress"):
+                        addr = (t.get(key) or "").lower()
+                        if addr and len(addr) >= 10 and addr not in seen:
+                            seen.add(addr)
+                            entries.append({"address": addr})
+            except Exception as exc:
+                log.debug("clob trades discovery: %s", exc)
+
+        log.info("Market-holder discovery found %d unique wallets", len(entries))
+        return entries
 
     async def _upsert_wallet(self, address: str, leaderboard_entry: dict) -> None:
         """Fetch full wallet data, score it, and save to DB."""
