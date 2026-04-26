@@ -212,7 +212,14 @@ class FlowDetector:
         try:
             market = await self.gamma.get_market(condition_id)
             if market:
-                prices = market.get("outcomePrices", [0.5, 0.5])
+                import json as _json
+                raw_prices = market.get("outcomePrices", [0.5, 0.5])
+                if isinstance(raw_prices, str):
+                    try:
+                        raw_prices = _json.loads(raw_prices)
+                    except Exception:
+                        raw_prices = [0.5, 0.5]
+                prices = raw_prices if isinstance(raw_prices, list) else [0.5, 0.5]
                 yes_price = float(prices[0] or 0.5) if prices else 0.5
 
                 # Extract token IDs so we can fetch real spread from CLOB

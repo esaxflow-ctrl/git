@@ -123,21 +123,27 @@ class DataClient:
         offset: int = 0,
         sort_by: str = "profitLoss",
     ) -> list[dict]:
-        """Primary leaderboard endpoint."""
-        data = await self._get(
-            _LB_BASE,
-            "/portfolio-leaderboard",
-            params={
-                "window": window,
-                "limit": limit,
-                "offset": offset,
-                "sortBy": sort_by,
-            },
-        )
-        if isinstance(data, list):
-            return data
-        if isinstance(data, dict):
-            return data.get("data", data.get("leaderboard", []))
+        """Primary leaderboard endpoint — tries several known URLs in order."""
+        params = {"window": window, "limit": limit, "offset": offset, "sortBy": sort_by}
+        candidates = [
+            (_LB_BASE,   "/portfolio-leaderboard"),
+            (_DATA_BASE, "/leaderboard"),
+            (_DATA_BASE, "/portfolio-leaderboard"),
+            (_LB_BASE,   "/leaderboard"),
+        ]
+        for base, path in candidates:
+            try:
+                data = await self._get(base, path, params=params)
+                if data is None:
+                    continue
+                if isinstance(data, list) and data:
+                    return data
+                if isinstance(data, dict):
+                    entries = data.get("data", data.get("leaderboard", data.get("results", [])))
+                    if entries:
+                        return entries
+            except Exception:
+                continue
         return []
 
     async def get_full_leaderboard(self, max_entries: int = 500) -> list[dict]:

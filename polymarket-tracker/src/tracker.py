@@ -43,6 +43,19 @@ log = logging.getLogger(__name__)
 settings = get_settings()
 
 
+def _parse_prices(raw) -> list:
+    """Gamma API sometimes returns outcomePrices as a JSON string instead of a list."""
+    import json
+    if isinstance(raw, list):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+    return [0.5, 0.5]
+
+
 class Tracker:
 
     def __init__(self) -> None:
@@ -314,7 +327,7 @@ class Tracker:
 
                     row.question = m.get("question", "")
                     row.category = m.get("category", "")
-                    prices = m.get("outcomePrices", [0.5, 0.5])
+                    prices = _parse_prices(m.get("outcomePrices", [0.5, 0.5]))
                     row.yes_price = float(prices[0]) if prices else 0.5
                     row.no_price = float(prices[1]) if len(prices) > 1 else 0.5
                     row.liquidity_usd = float(m.get("liquidity", 0) or 0)

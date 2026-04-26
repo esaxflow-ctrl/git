@@ -77,7 +77,14 @@ class Backtester:
             market = await self.gamma.get_market(condition_id)
             if not market:
                 return None
-            prices = market.get("outcomePrices", [])
+            import json as _json
+            raw = market.get("outcomePrices", [])
+            if isinstance(raw, str):
+                try:
+                    raw = _json.loads(raw)
+                except Exception:
+                    raw = []
+            prices = raw if isinstance(raw, list) else []
             if outcome.upper() in ("NO", "2"):
                 return float(prices[1]) if len(prices) > 1 else None
             return float(prices[0]) if prices else None
