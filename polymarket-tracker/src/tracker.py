@@ -23,7 +23,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 
 from src.api.gamma_client import GammaClient
 from src.api.clob_client import ClobClient
@@ -235,7 +235,16 @@ class Tracker:
     # ── Wallet discovery / scoring ────────────────────────────────────────────
 
     async def _refresh_wallets(self) -> None:
-        log.info("Refreshing wallet list from leaderboard…")
+        # Skip on-chain discovery if the DB already holds enough wallets — saves
+        # 20-30s per startup and avoids hammering free RPCs we don't need.
+        async with SessionLocal() as db:
+            existing = (await db.execute(select(func.count(WalletDB.id)))).scalar() or 0
+        log.info("Refreshing wallets (DB has %d existing)…", existing)
+
+        if existing >= settings.wallet_discovery_max // 2:
+            log.info("DB has %d wallets — skipping fresh discovery this cycle", existing)
+            self._last_wallet_refresh = datetime.now(timezone.utc)
+            return
 
         entries = await self.data.get_full_leaderboard(max_entries=settings.leaderboard_fetch_limit)
         if not entries:
@@ -367,7 +376,7 @@ class Tracker:
                         break
 
                 except Exception as exc:
-                    log.warning("Polygon RPC %s: %s", rpc_url, exc)
+                    log.warning("Polygon RPC %s: %s (%s)", rpc_url, type(exc).__name__, exc or "no message")
 
             # ── Phase 2: Polygonscan fallback ─────────────────────────────────
             if not phase1_done:
@@ -405,7 +414,7 @@ class Tracker:
                             await asyncio.sleep(5)
 
                     except Exception as exc:
-                        log.warning("Polygonscan %s: %s", contract[:12], exc)
+                        log.warning("Polygonscan %s: %s (%s)", contract[:12], type(exc).__name__, exc or "no message")
 
         # Rank by trading frequency and cap to top N — filters out one-off touches,
         # bots, and addresses that are actually order hashes that happened to look
