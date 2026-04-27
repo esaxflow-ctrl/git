@@ -1,4 +1,4 @@
-import { useCurrentFrame, useVideoConfig, interpolate, Easing, Video } from "remotion";
+import { useCurrentFrame, useVideoConfig, interpolate, Easing, Video, Img } from "remotion";
 import { VisualAsset, MotionStyle } from "../../lib/validation/schemas";
 
 interface Props {
@@ -38,6 +38,25 @@ export function VideoScene({ asset, motionStyle }: Props) {
     }
     default:
       transform = "scale(1)";
+  }
+
+  // Stock-video scene fell through to the SVG fallback (no Pexels key, etc.).
+  // Render the SVG as a still image instead of a black void.
+  if (!asset.url && asset.svgData) {
+    return (
+      <div style={{ width: "100%", height: "100%", overflow: "hidden", opacity: fadeIn }}>
+        <Img
+          src={asset.svgData}
+          style={{
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+            transform,
+            transformOrigin: "center center",
+          }}
+        />
+      </div>
+    );
   }
 
   if (!asset.url) return <div style={{ width: "100%", height: "100%", background: "#000" }} />;

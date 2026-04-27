@@ -49,7 +49,18 @@ function computeSceneDurations(job: RenderJob): number[] {
     );
   });
 
-  return enforceTotalDuration(raw);
+  const rawTotalMs = raw.reduce((a, b) => a + b, 0);
+  console.info(
+    `[render] Pre-enforce per-scene ms: [${raw.join(", ")}] total=${rawTotalMs}ms (${(rawTotalMs / 1000).toFixed(2)}s)`
+  );
+
+  const enforced = enforceTotalDuration(raw);
+  const enforcedTotalMs = enforced.reduce((a, b) => a + b, 0);
+  console.info(
+    `[render] Post-enforce per-scene ms: [${enforced.join(", ")}] total=${enforcedTotalMs}ms (${(enforcedTotalMs / 1000).toFixed(2)}s)`
+  );
+
+  return enforced;
 }
 
 /**

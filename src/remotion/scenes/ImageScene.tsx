@@ -51,7 +51,11 @@ export function ImageScene({ asset, motionStyle }: Props) {
       transform = "scale(1)";
   }
 
-  if (!asset.url) return <div style={{ width: "100%", height: "100%", background: "#111" }} />;
+  // Pick a usable source: real URL first, then the SVG fallback (data URL).
+  // Without this fallback, demo-mode scenes whose visualMode is stockImage
+  // render a black div because the SVG is in `svgData`, not `url`.
+  const src = asset.url ?? asset.svgData;
+  if (!src) return <div style={{ width: "100%", height: "100%", background: "#111" }} />;
 
   return (
     <div
@@ -63,7 +67,7 @@ export function ImageScene({ asset, motionStyle }: Props) {
       }}
     >
       <img
-        src={asset.url}
+        src={src}
         style={{
           width: "100%",
           height: "100%",
