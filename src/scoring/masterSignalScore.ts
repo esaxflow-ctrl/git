@@ -52,21 +52,40 @@ const WEIGHTS = {
 export function computeMasterSignal(input: MasterScoreInputs): MasterSignal {
   const { cfg, breakdown } = input;
 
-  let weighted = 0;
-  weighted += breakdown.tokenSafety * WEIGHTS.tokenSafety;
-  weighted += breakdown.smartWallet * WEIGHTS.smartWallet;
-  weighted += breakdown.smartWalletCluster * WEIGHTS.smartWalletCluster;
-  weighted += breakdown.buzz * WEIGHTS.buzz;
-  weighted += breakdown.event * WEIGHTS.event;
-  weighted += breakdown.pumpfun * WEIGHTS.pumpfun;
-  weighted += breakdown.migration * WEIGHTS.migration;
-  weighted += breakdown.liquidityGrowth * WEIGHTS.liquidityGrowth;
-  weighted += breakdown.volumeAcceleration * WEIGHTS.volumeAcceleration;
-  weighted += breakdown.dexscreenerBoost * WEIGHTS.dexscreenerBoost;
-  weighted += breakdown.narrative * WEIGHTS.narrative;
-  weighted += breakdown.jupiterExecutionQuality * WEIGHTS.jupiterExecutionQuality;
+  // Each sub-score is "active" when it has actually been measured. A score of
+  // 0 means the upstream module didn't run (or returned no signal), not that
+  // the token failed that gate. Treating 0 as a real measurement of "bad"
+  // crushed the master score whenever only a handful of modules were wired
+  // up — see Solana paper-mode runs where MAGA / LOL / Dunald passed every
+  // hard gate but got recommendation = PASS purely because 8 of 12 sub-scores
+  // were unfilled.
+  //
+  // Fix: weighted average over active components only. A token with strong
+  // signals from a few sources still scores well. The recommendation logic
+  // separately requires a minimum number of active components to act, so
+  // sparse data can't trigger LIVE_BUY_ALLOWED.
 
-  // Too-late penalty (subtract up to 25 raw points if late).
+  const components: Array<{ name: string; score: number; weight: number }> = [
+    { name: 'tokenSafety', score: breakdown.tokenSafety, weight: WEIGHTS.tokenSafety },
+    { name: 'smartWallet', score: breakdown.smartWallet, weight: WEIGHTS.smartWallet },
+    { name: 'smartWalletCluster', score: breakdown.smartWalletCluster, weight: WEIGHTS.smartWalletCluster },
+    { name: 'buzz', score: breakdown.buzz, weight: WEIGHTS.buzz },
+    { name: 'event', score: breakdown.event, weight: WEIGHTS.event },
+    { name: 'pumpfun', score: breakdown.pumpfun, weight: WEIGHTS.pumpfun },
+    { name: 'migration', score: breakdown.migration, weight: WEIGHTS.migration },
+    { name: 'liquidityGrowth', score: breakdown.liquidityGrowth, weight: WEIGHTS.liquidityGrowth },
+    { name: 'volumeAcceleration', score: breakdown.volumeAcceleration, weight: WEIGHTS.volumeAcceleration },
+    { name: 'dexscreenerBoost', score: breakdown.dexscreenerBoost, weight: WEIGHTS.dexscreenerBoost },
+    { name: 'narrative', score: breakdown.narrative, weight: WEIGHTS.narrative },
+    { name: 'jupiterExecutionQuality', score: breakdown.jupiterExecutionQuality, weight: WEIGHTS.jupiterExecutionQuality },
+  ];
+
+  const active = components.filter((c) => c.score > 0);
+  const totalActiveWeight = active.reduce((s, c) => s + c.weight, 0);
+  const weightedSum = active.reduce((s, c) => s + c.score * c.weight, 0);
+  let weighted = totalActiveWeight > 0 ? weightedSum / totalActiveWeight : 0;
+
+  // Too-late penalty applies in absolute terms (subtract up to 25 points).
   const latePenalty = (Math.max(0, breakdown.tooLatePenalty) / 100) * 25;
   weighted -= latePenalty;
 
@@ -107,19 +126,25 @@ export function computeMasterSignal(input: MasterScoreInputs): MasterSignal {
   } else if (
     cfg.liveModeEnabled &&
     masterScore >= cfg.LIVE_BUY_THRESHOLD &&
-    passingSupports.length >= 2
+    passingSupports.length >= 2 &&
+    active.length >= 4
   ) {
+    // Live still requires 2+ independent supports AND >= 4 active components.
+    // The active.length gate keeps live trading honest even with the
+    // normalised score: a single very-strong sub-score can't trigger live.
     recommendation = 'LIVE_BUY_ALLOWED';
-    reason = `master ${masterScore} >= LIVE_BUY_THRESHOLD ${cfg.LIVE_BUY_THRESHOLD} with ${passingSupports.length} confirmations`;
-  } else if (masterScore >= cfg.LIVE_BUY_THRESHOLD - 10 && passingSupports.length >= 2) {
+    reason = `master ${masterScore} >= LIVE_BUY_THRESHOLD ${cfg.LIVE_BUY_THRESHOLD}, ${passingSupports.length} confirmations, ${active.length} active components`;
+  } else if (masterScore >= cfg.LIVE_BUY_THRESHOLD - 10 && passingSupports.length >= 1) {
+    // Paper-buy is more permissive: 1 supporting signal is enough provided
+    // the master score still clears LIVE_BUY_THRESHOLD - 10.
     recommendation = 'PAPER_BUY';
-    reason = `master ${masterScore} good enough for paper; confirmations=${passingSupports.length}`;
-  } else if (masterScore >= 60) {
+    reason = `master ${masterScore} good enough for paper; confirmations=${passingSupports.length}, active=${active.length}`;
+  } else if (masterScore >= 60 || passingSupports.length >= 1) {
     recommendation = 'WATCH';
-    reason = `master ${masterScore} interesting but lacks confirmations (${passingSupports.length})`;
+    reason = `master ${masterScore}, ${passingSupports.length} confirmations, ${active.length} active`;
   } else {
     recommendation = 'PASS';
-    reason = `master ${masterScore} below WATCH bar`;
+    reason = `master ${masterScore} below WATCH bar (${active.length} active components)`;
   }
 
   return {
