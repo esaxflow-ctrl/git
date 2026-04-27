@@ -176,7 +176,7 @@ export class BirdeyeAdapter {
     }
   }
 
-  async trendingTokens(limit = 50): Promise<{ address: string; symbol: string; rank: number }[]> {
+  async trendingTokens(limit = 20): Promise<{ address: string; symbol: string; rank: number }[]> {
     if (!this.apiKey) {
       if (process.env.BIRDEYE_DEBUG) console.warn('[birdeye] trendingTokens: no apiKey set');
       return [];
@@ -185,7 +185,10 @@ export class BirdeyeAdapter {
       return this.trendingCache.entries.slice(0, limit);
     }
     await this.bucket.acquire();
-    const url = `${BASE}/defi/token_trending?sort_by=rank&sort_type=asc&offset=0&limit=${limit}`;
+    // Birdeye caps `limit` at 20 for the trending endpoint (HTTP 400
+    // "limit should be integer, range 1-20" otherwise).
+    const fetchLimit = Math.min(20, Math.max(1, limit));
+    const url = `${BASE}/defi/token_trending?sort_by=rank&sort_type=asc&offset=0&limit=${fetchLimit}`;
     try {
       const r = await fetch(url, { headers: this.headers() });
       if (!r.ok) {
