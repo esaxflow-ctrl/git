@@ -275,43 +275,88 @@ class WalletScorer:
 
 
 def build_metrics_from_api(address: str, profile: dict, positions: list[dict], activity: list[dict]) -> WalletMetrics:
-    """Convert raw API data into WalletMetrics for scoring."""
+    """Convert raw API data into WalletMetrics for scoring.
+
+    Positions are the source of truth (Gamma /positions returns cashPnl,
+    realizedPnl, initialValue, etc. per position). Profile/activity are
+    optional augmentation when the Data API actually responds.
+    """
     m = WalletMetrics(address=address)
 
-    # Profile data
-    m.total_profit_usd = float(profile.get("pnl", profile.get("profitLoss", 0)) or 0)
-    m.total_volume_usd = float(profile.get("volume", profile.get("totalVolume", 0)) or 0)
-    m.markets_traded = int(profile.get("marketsTraded", profile.get("numMarkets", 0)) or 0)
+    # ── Primary: per-position PnL aggregation (always works) ──────────────────
+    if positions:
+        pos_pnls: list[float] = []
+        sizes: list[float] = []
+        entry_prices: list[float] = []
+        condition_ids: set[str] = set()
+        category_pnl: dict[str, float] = {}
+        resolved_count = 0
+        active_count = 0
+        most_recent_ts: Optional[datetime] = None
 
-    if m.total_volume_usd > 0:
-        m.roi_pct = m.total_profit_usd / m.total_volume_usd * 100
+        for pos in positions:
+            init_val = float(pos.get("initialValue", 0) or 0)
+            curr_val = float(pos.get("currentValue", 0) or 0)
+            cash_pnl = float(pos.get("cashPnl", 0) or 0)
+            real_pnl = float(pos.get("realizedPnl", 0) or 0)
+            entry_price = float(pos.get("avgPrice", 0) or 0)
+            cid = pos.get("conditionId") or pos.get("market") or ""
+            redeemed = bool(pos.get("redeemed", False))
+            redeemable = bool(pos.get("redeemable", False))
+            size = float(pos.get("size", 0) or 0)
 
-    # Activity-derived metrics
-    if activity:
-        sizes = []
-        entry_prices = []
-        wins, losses = 0, 0
+            # Some Gamma payloads omit cashPnl — derive from currentValue - initialValue
+            if cash_pnl == 0 and (curr_val or init_val):
+                cash_pnl = curr_val - init_val
 
-        for act in activity:
-            side = str(act.get("type", act.get("side", ""))).upper()
-            size = float(act.get("usdcSize", act.get("size", 0)) or 0)
-            price = float(act.get("price", 0) or 0)
-            outcome_price = float(act.get("outcomePrice", act.get("returnAmt", 0)) or 0)
+            pnl = cash_pnl + real_pnl
+            pos_pnls.append(pnl)
 
-            if size > 0:
-                sizes.append(size)
-            if 0 < price < 1:
-                entry_prices.append(price)
+            if init_val > 0:
+                sizes.append(init_val)
+            if 0 < entry_price < 1:
+                entry_prices.append(entry_price)
+            if cid:
+                condition_ids.add(cid)
 
-            # Win/loss detection from resolved trades
-            if act.get("type") in ("REDEEM", "RESOLUTION") or outcome_price > 0:
-                if outcome_price > size * price if size > 0 and price > 0 else outcome_price > 0:
-                    wins += 1
-                else:
-                    losses += 1
+            # A position is "resolved" if it was redeemed or is currently redeemable
+            # (market closed). Anything still open with size>0 is active.
+            if redeemed or redeemable:
+                resolved_count += 1
+            elif size > 0:
+                active_count += 1
 
-        m.win_count = wins
-        m.loss_count = losses
+            # Per-category PnL — Gamma uses "category" or "eventSlug" as proxy
+            cat = pos.get("category") or pos.get("eventSlug") or "uncategorized"
+            category_pnl[cat] = category_pnl.get(cat, 0.0) + pnl
+
+            # Last-active hint — most recent position end/update timestamp
+            for ts_field in ("endDate", "updatedAt", "lastInteraction"):
+                ts_str = pos.get(ts_field)
+                if not ts_str:
+                    continue
+                try:
+                    from dateutil.parser import parse as dtparse
+                    ts_dt = dtparse(ts_str)
+                    if ts_dt.tzinfo is None:
+                        ts_dt = ts_dt.replace(tzinfo=timezone.utc)
+                    if most_recent_ts is None or ts_dt > most_recent_ts:
+                        most_recent_ts = ts_dt
+                except Exception:
+                    pass
+
+        m.total_profit_usd = sum(pos_pnls)
+        m.total_volume_usd = sum(sizes)
+        if m.total_volume_usd > 0:
+            m.roi_pct = m.total_profit_usd / m.total_volume_usd * 100
+
+        m.win_count = sum(1 for p in pos_pnls if p > 0)
+        m.loss_count = sum(1 for p in pos_pnls if p < 0)
+        m.markets_traded = len(condition_ids)
+        # If we found explicit resolved markers, trust them; else fall back to win+loss
+        m.resolved_markets = resolved_count or (m.win_count + m.loss_count)
+        m.active_positions_count = active_count
+        m.category_profits = {k: v for k, v in category_pnl.items() if v != 0}
 
         if sizes:
             m.avg_position_size_usd = sum(sizes) / len(sizes)
@@ -322,31 +367,60 @@ def build_metrics_from_api(address: str, profile: dict, positions: list[dict], a
         if entry_prices:
             m.avg_entry_price = sum(entry_prices) / len(entry_prices)
 
-        m.resolved_markets = wins + losses
+        if pos_pnls:
+            top = max(pos_pnls)
+            bot = min(pos_pnls)
+            m.largest_win_usd = top if top > 0 else 0.0
+            m.largest_loss_usd = abs(bot) if bot < 0 else 0.0
+            m.profit_ex_top_win = m.total_profit_usd - m.largest_win_usd
 
-    # Estimate profit_ex_top_win from positions
-    if positions:
-        pos_profits = []
-        for pos in positions:
-            pnl = float(pos.get("currentValue", 0) or 0) - float(pos.get("initialValue", pos.get("size", 0)) or 0)
-            pos_profits.append(pnl)
+        if most_recent_ts:
+            m.days_since_last_active = (datetime.now(timezone.utc) - most_recent_ts).days
 
-        if pos_profits:
-            top_win = max(pos_profits)
-            m.largest_win_usd = top_win
-            m.profit_ex_top_win = m.total_profit_usd - max(0, top_win)
-            m.largest_loss_usd = abs(min(pos_profits)) if min(pos_profits) < 0 else 0
+    # ── Secondary: profile data overrides if it actually returned numbers ─────
+    # The Data API is mostly 404-ing right now, but if it ever works, it gives
+    # an authoritative aggregate that's more accurate than per-position math.
+    if profile:
+        profile_pnl = float(profile.get("pnl", profile.get("profitLoss", 0)) or 0)
+        profile_vol = float(profile.get("volume", profile.get("totalVolume", 0)) or 0)
+        profile_markets = int(profile.get("marketsTraded", profile.get("numMarkets", 0)) or 0)
+        if profile_pnl != 0:
+            m.total_profit_usd = profile_pnl
+        if profile_vol > 0:
+            m.total_volume_usd = profile_vol
+            m.roi_pct = m.total_profit_usd / m.total_volume_usd * 100
+        if profile_markets > m.markets_traded:
+            m.markets_traded = profile_markets
 
-    # Days since last active
-    last_active_str = profile.get("lastActive", profile.get("updatedAt", ""))
-    if last_active_str:
-        try:
-            from dateutil.parser import parse as dtparse
-            last_dt = dtparse(last_active_str)
-            if last_dt.tzinfo is None:
-                last_dt = last_dt.replace(tzinfo=timezone.utc)
-            m.days_since_last_active = (datetime.now(timezone.utc) - last_dt).days
-        except Exception:
-            pass
+        last_active_str = profile.get("lastActive", profile.get("updatedAt", ""))
+        if last_active_str:
+            try:
+                from dateutil.parser import parse as dtparse
+                last_dt = dtparse(last_active_str)
+                if last_dt.tzinfo is None:
+                    last_dt = last_dt.replace(tzinfo=timezone.utc)
+                days = (datetime.now(timezone.utc) - last_dt).days
+                if days < m.days_since_last_active:
+                    m.days_since_last_active = days
+            except Exception:
+                pass
+
+    # ── Tertiary: activity hints early-entry / beat-close (best-effort) ───────
+    if activity:
+        early_entries = beat_closes = total_acts = 0
+        for act in activity:
+            entry_p = float(act.get("price", 0) or 0)
+            close_p = float(act.get("outcomePrice", 0) or 0)
+            if 0 < entry_p < 1:
+                total_acts += 1
+                # Entered at extremes (≤25¢ or ≥75¢) = early conviction
+                if entry_p <= 0.25 or entry_p >= 0.75:
+                    early_entries += 1
+                # Beat the closer if direction-aligned outcome > entry
+                if 0 < close_p < 1 and abs(close_p - 0.5) > abs(entry_p - 0.5):
+                    beat_closes += 1
+        if total_acts > 0:
+            m.early_entry_rate_pct = early_entries / total_acts * 100
+            m.beat_close_rate_pct = beat_closes / total_acts * 100
 
     return m

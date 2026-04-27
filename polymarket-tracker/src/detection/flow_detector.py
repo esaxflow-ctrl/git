@@ -90,9 +90,11 @@ class FlowDetector:
 
     async def scan_all_wallets(self) -> list[DetectedTrade]:
         """Scan all tracked wallets and return detected trades."""
+        from src.config import get_settings as _gs
+        threshold = _gs().min_wallet_sharp_to_track
         async with SessionLocal() as db:
             result = await db.execute(
-                select(WalletDB).where(WalletDB.sharp_score >= 30).order_by(WalletDB.sharp_score.desc())
+                select(WalletDB).where(WalletDB.sharp_score >= threshold).order_by(WalletDB.sharp_score.desc())
             )
             wallets = result.scalars().all()
 

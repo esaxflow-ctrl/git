@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     wallet_discovery_min_trades: int = 3       # min on-chain trades in last 500 blocks
     wallet_score_concurrency: int = 8          # parallel API fetches during scoring
 
+    # Flow-detector wallet quality filter — only poll wallets ≥ this sharp score
+    min_wallet_sharp_to_track: int = 50
+
     # Alerts
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

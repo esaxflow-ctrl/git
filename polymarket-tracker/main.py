@@ -56,6 +56,9 @@ def parse_args() -> argparse.Namespace:
     # backtest — print backtest summary
     sub.add_parser("backtest", help="Print backtest summary from DB")
 
+    # rescore-all — re-run scoring on every wallet currently in the DB
+    sub.add_parser("rescore-all", help="Re-score all wallets in DB using current metrics logic")
+
     return p.parse_args()
 
 
@@ -156,6 +159,38 @@ async def add_wallet(address: str) -> None:
     await t.data.close()
 
 
+async def rescore_all() -> None:
+    """Re-score every wallet currently in the DB using the current metrics logic."""
+    import asyncio as _asyncio
+    from sqlalchemy import select
+    from src.database import init_db, SessionLocal, WalletDB
+    from src.tracker import Tracker
+    from src.config import get_settings
+
+    await init_db()
+    t = Tracker()
+
+    async with SessionLocal() as db:
+        rows = (await db.execute(select(WalletDB.address))).scalars().all()
+
+    log.info("Re-scoring %d wallets…", len(rows))
+    sem = _asyncio.Semaphore(get_settings().wallet_score_concurrency)
+    done = 0
+
+    async def _one(addr: str) -> None:
+        nonlocal done
+        async with sem:
+            await t._upsert_wallet(addr, {"address": addr})
+        done += 1
+        if done % 25 == 0:
+            log.info("Re-scored %d/%d…", done, len(rows))
+
+    await _asyncio.gather(*(_one(a) for a in rows), return_exceptions=True)
+    log.info("Done — re-scored %d wallets", done)
+    await t.gamma.close()
+    await t.data.close()
+
+
 async def print_backtest() -> None:
     from src.database import init_db
     from src.api.gamma_client import GammaClient
@@ -193,6 +228,8 @@ def main() -> None:
         asyncio.run(add_wallet(args.address))
     elif args.command == "backtest":
         asyncio.run(print_backtest())
+    elif args.command == "rescore-all":
+        asyncio.run(rescore_all())
 
 
 if __name__ == "__main__":
