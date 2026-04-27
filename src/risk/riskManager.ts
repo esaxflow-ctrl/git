@@ -86,17 +86,15 @@ export class RiskManager {
 
     // ----- 3. Score thresholds -------------------------------------------
     if (signal.breakdown.tokenSafety < this.cfg.TOKEN_SAFETY_THRESHOLD) {
-      reasons.push(
+      return fail(
         `safety score ${signal.breakdown.tokenSafety} < threshold ${this.cfg.TOKEN_SAFETY_THRESHOLD}`,
       );
-      return fail(reasons[reasons.length - 1]!);
     }
 
     if (intendedMode === 'live' && signal.masterScore < this.cfg.LIVE_BUY_THRESHOLD) {
-      reasons.push(
+      return fail(
         `master score ${signal.masterScore.toFixed(1)} < LIVE_BUY_THRESHOLD ${this.cfg.LIVE_BUY_THRESHOLD}`,
       );
-      return fail(reasons[reasons.length - 1]!);
     }
 
     // ----- 4. Liquidity / volume / unique buyers --------------------------

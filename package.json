@@ -17,7 +17,12 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "wallet:list": "tsx src/cli/wallets.ts list",
+    "wallet:list:proposed": "tsx src/cli/wallets.ts list proposed",
+    "wallet:add": "tsx src/cli/wallets.ts add",
+    "wallet:remove": "tsx src/cli/wallets.ts remove",
+    "wallet:discover": "tsx src/cli/wallets.ts discover"
   },
   "dependencies": {
     "@solana/web3.js": "^1.95.0",

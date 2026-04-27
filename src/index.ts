@@ -31,7 +31,9 @@ import { LiveTrader } from './execution/liveTrader.js';
 import { ExitManager } from './execution/exitManager.js';
 import { JupiterExecutor } from './execution/jupiterExecutor.js';
 import { LiquidityScanner } from './scanners/liquidityScanner.js';
-import { scanNewTokens } from './scanners/newTokenScanner.js';
+import { discoverMultiSource } from './scanners/multiSourceDiscovery.js';
+import { WalletScanner } from './scanners/walletScanner.js';
+import { WalletDiscovery } from './scanners/walletDiscovery.js';
 import { scoreTokenSafety } from './scoring/tokenSafetyScore.js';
 import { volumeAccelerationStrategy } from './strategies/volumeAccelerationStrategy.js';
 import { liquidityGrowthStrategy } from './strategies/liquidityGrowthStrategy.js';
@@ -84,6 +86,8 @@ async function main(): Promise<void> {
   const risk = new RiskManager(cfg, db, killSwitch);
   const paper = new PaperTrader(cfg, db, jupiter);
   const liquidity = new LiquidityScanner();
+  const walletScanner = new WalletScanner(helius, db);
+  const walletDiscovery = new WalletDiscovery({ helius, birdeye, dex, db });
 
   let live: LiveTrader | undefined;
   if (mode === 'live') {
@@ -106,15 +110,68 @@ async function main(): Promise<void> {
 
   const tickIntervalMs = 30_000;
   const dashboardIntervalMs = 5_000;
+  const walletPollIntervalMs = 60_000;
+  const walletDiscoveryIntervalMs = 10 * 60_000;
 
   setInterval(() => {
     void dashboard.render().catch(() => {});
   }, dashboardIntervalMs);
 
+  // Wallet poll: pulls swap activity from wallets in the watch list and
+  // emits "elite wallet bought" signals downstream. Runs every minute.
+  if (cfg.ENABLE_SMART_WALLET_TRACKING) {
+    setInterval(() => {
+      void walletScanner
+        .pollOnce()
+        .then((signals) => {
+          if (signals.length > 0) {
+            console.log(chalk.cyan(`[wallet] ${signals.length} new buys from watched wallets`));
+          }
+        })
+        .catch((e: unknown) => {
+          db.insertRiskEvent({
+            kind: 'rpc_unstable',
+            timestamp: Date.now(),
+            detail: `walletScanner: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        });
+    }, walletPollIntervalMs);
+
+    // Wallet auto-discovery: examines pools for trending tokens, records who
+    // bought early, proposes wallets with breadth across tokens. Conservative
+    // labels — never auto-promotes to ELITE_COPYABLE.
+    setInterval(() => {
+      void walletDiscovery
+        .runOnce()
+        .then((stats) => {
+          if (stats.newObservations > 0 || stats.proposedWallets > 0) {
+            console.log(
+              chalk.cyan(
+                `[discover] ${stats.examinedPools} pools, +${stats.newObservations} obs, +${stats.proposedWallets} proposed`,
+              ),
+            );
+          }
+        })
+        .catch((e: unknown) => {
+          db.insertRiskEvent({
+            kind: 'rpc_unstable',
+            timestamp: Date.now(),
+            detail: `walletDiscovery: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        });
+    }, walletDiscoveryIntervalMs);
+
+    // Run wallet discovery once on boot (after a short delay for warm-up).
+    setTimeout(() => {
+      void walletDiscovery.runOnce().catch(() => {});
+    }, 30_000);
+  }
+
   // Main pipeline loop
   const loop = async (): Promise<void> => {
     try {
-      const snapshots = await scanNewTokens({ dex, birdeye, helius, jupiter }, 25);
+      const discovered = await discoverMultiSource({ dex, birdeye, helius, jupiter });
+      const snapshots = discovered.map((d) => d.snapshot);
       for (const snap of snapshots) {
         db.insertTokenSnapshot(snap);
         const delta = liquidity.observe(snap);

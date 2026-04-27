@@ -334,4 +334,33 @@ CREATE TABLE IF NOT EXISTS daily_reports (
   emergency_exits INTEGER,
   generated_at INTEGER NOT NULL
 );
+
+-- ----- Wallet auto-discovery -------------------------------------------------
+-- Each row: a wallet was observed buying a token at first_buy_ts. Used to
+-- promote candidates into watched_wallets after they appear across multiple
+-- tokens. Includes a snapshot of the token's market cap at buy time so we can
+-- approximate "how early" they entered.
+CREATE TABLE IF NOT EXISTS wallet_observations (
+  wallet TEXT NOT NULL,
+  token_address TEXT NOT NULL,
+  first_buy_ts INTEGER NOT NULL,
+  pool_age_at_buy_seconds INTEGER,
+  buy_price_usd REAL,
+  buy_market_cap_usd REAL,
+  later_max_market_cap_usd REAL,
+  approx_pnl_pct REAL,
+  signature TEXT,
+  PRIMARY KEY (wallet, token_address)
+);
+CREATE INDEX IF NOT EXISTS idx_walobs_wallet ON wallet_observations(wallet, first_buy_ts DESC);
+CREATE INDEX IF NOT EXISTS idx_walobs_token ON wallet_observations(token_address, first_buy_ts ASC);
+
+-- Cache of tokens we've already scanned for early buyers so the discovery
+-- loop doesn't re-fetch the same pool over and over.
+CREATE TABLE IF NOT EXISTS examined_pools (
+  token_address TEXT PRIMARY KEY,
+  pair_address TEXT,
+  examined_at INTEGER NOT NULL,
+  early_buyers_seen INTEGER NOT NULL DEFAULT 0
+);
 `;
