@@ -1,8 +1,14 @@
 /**
  * Jupiter Swap API adapter.
  *
- * - Quote endpoint: https://quote-api.jup.ag/v6/quote
- * - Swap endpoint: https://quote-api.jup.ag/v6/swap
+ * Endpoints (post-2024 Jupiter migration):
+ *   - Free / no key:  https://lite-api.jup.ag/swap/v1/quote
+ *                     https://lite-api.jup.ag/swap/v1/swap
+ *   - Paid / API key: https://api.jup.ag/swap/v1/quote
+ *                     https://api.jup.ag/swap/v1/swap
+ *
+ * The old `quote-api.jup.ag/v6/*` host has been retired and DNS no longer
+ * resolves it.
  *
  * We do NOT auto-execute swaps from this adapter. The live executor
  * (`execution/jupiterExecutor.ts`) builds, simulates, and sends transactions
@@ -12,8 +18,8 @@
 import pRetry from 'p-retry';
 import type { JupiterQuoteResult } from '../types.js';
 
-const QUOTE_URL = 'https://quote-api.jup.ag/v6/quote';
-const SWAP_URL = 'https://quote-api.jup.ag/v6/swap';
+const LITE_BASE = 'https://lite-api.jup.ag/swap/v1';
+const PRO_BASE = 'https://api.jup.ag/swap/v1';
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 export interface JupiterQuoteOptions {
@@ -26,11 +32,17 @@ export interface JupiterQuoteOptions {
 }
 
 export class JupiterAdapter {
-  constructor(private readonly apiKey?: string) {}
+  private readonly base: string;
+
+  constructor(private readonly apiKey?: string) {
+    // Use the paid host only when an API key is configured. Otherwise the
+    // free `lite-api.jup.ag` host is used (rate-limited but functional).
+    this.base = apiKey ? PRO_BASE : LITE_BASE;
+  }
 
   /** Returns a quote, or null on transient failure. Never throws on missing route. */
   async getQuote(opts: JupiterQuoteOptions): Promise<JupiterQuoteResult | null> {
-    const url = new URL(QUOTE_URL);
+    const url = new URL(`${this.base}/quote`);
     url.searchParams.set('inputMint', opts.inputMint);
     url.searchParams.set('outputMint', opts.outputMint);
     url.searchParams.set('amount', opts.amount);
@@ -88,7 +100,7 @@ export class JupiterAdapter {
     dynamicComputeUnitLimit?: boolean;
   }): Promise<{ swapTransaction: string } | null> {
     try {
-      const res = await fetch(SWAP_URL, {
+      const res = await fetch(`${this.base}/swap`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
