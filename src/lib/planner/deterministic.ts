@@ -161,6 +161,56 @@ const CINEMATIC_CONTEXTS_BY_MODE: Record<VisualMode, string> = {
   timelineCard: "temporal progression, before and after, narrative arc",
 };
 
+// Concrete visualizable nouns. When a scene's narration mentions one of
+// these, that word is used as the Openverse search term. Stock photo APIs
+// return strong matches for short concrete nouns, terrible matches for
+// abstract phrases like "the cost compounds in the background", so we
+// always prefer a noun the search can actually match.
+const VISUALIZABLE_NOUNS = new Set([
+  "phone", "screen", "laptop", "keyboard", "monitor", "computer", "tablet",
+  "desk", "chair", "office", "room", "bed", "kitchen", "bathroom", "hallway",
+  "window", "door", "mirror", "ceiling", "floor", "wall",
+  "morning", "night", "evening", "sunrise", "sunset", "dawn", "dusk",
+  "coffee", "tea", "water", "food", "dish", "dishes", "sink", "plate", "cup",
+  "hand", "hands", "face", "eyes", "feet", "shoulder", "back", "head",
+  "phone screen", "notification", "email", "inbox", "message", "text",
+  "clock", "calendar", "watch", "timer", "alarm",
+  "book", "pen", "paper", "notebook", "journal", "letter", "envelope", "page",
+  "stairs", "street", "city", "park", "forest", "ocean", "mountain", "sky",
+  "rain", "fog", "smoke", "fire", "snow", "wind", "shadow", "light",
+  "car", "bus", "train", "subway", "road", "bridge",
+  "person", "man", "woman", "child", "crowd",
+  "money", "cash", "coin", "wallet", "bank",
+  "running", "walking", "sitting", "standing", "sleeping", "waking",
+  "laundry", "trash", "mess", "clutter", "pile", "stack",
+  "mirror", "reflection", "glass", "wood", "metal", "stone",
+  "candle", "lamp", "neon", "headlight", "spotlight",
+]);
+
+// Topic anchors — used when a scene has no concrete noun in its narration.
+// Picks a relevant noun based on the script's overall topic so the visuals
+// stay coherent across the whole video instead of jumping to random photos.
+const TOPIC_ANCHORS: Array<{ pattern: RegExp; nouns: string[] }> = [
+  { pattern: /procrastinat|avoid|delay|later|put off/i, nouns: ["phone", "desk", "todo list", "calendar", "morning", "laundry"] },
+  { pattern: /anxiet|stress|overwhelm|panic/i, nouns: ["hands", "phone", "window rain", "ceiling", "dark room"] },
+  { pattern: /sleep|tired|insomnia|exhaust/i, nouns: ["bed", "ceiling", "alarm clock", "window night", "pillow"] },
+  { pattern: /money|finance|invest|saving|budget/i, nouns: ["coins", "wallet", "cash", "calculator", "bank"] },
+  { pattern: /history|ancient|war|empire/i, nouns: ["old book", "ruins", "statue", "manuscript", "vintage photo"] },
+  { pattern: /tech|ai|computer|software/i, nouns: ["laptop", "screen", "keyboard", "circuit", "data"] },
+  { pattern: /food|cook|eat|diet|meal/i, nouns: ["kitchen", "knife cutting", "plate", "ingredients", "stove"] },
+  { pattern: /workout|gym|fit|exercise/i, nouns: ["dumbbell", "running", "treadmill", "sweat", "morning run"] },
+  { pattern: /relationship|love|break|partner/i, nouns: ["window", "empty chair", "phone", "rain", "hallway"] },
+  { pattern: /focus|distraction|attention/i, nouns: ["phone screen", "notification", "desk", "window", "coffee"] },
+  { pattern: /habit|routine|pattern/i, nouns: ["calendar", "morning", "coffee", "alarm clock", "sneakers"] },
+];
+
+function inferTopicNouns(script: string): string[] {
+  for (const anchor of TOPIC_ANCHORS) {
+    if (anchor.pattern.test(script)) return anchor.nouns;
+  }
+  return ["window", "morning", "hands", "desk", "phone screen", "city street"];
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function splitIntoSentences(text: string): string[] {
@@ -170,15 +220,84 @@ function splitIntoSentences(text: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-function groupSentences(sentences: string[], targetGroups: number): string[][] {
-  if (sentences.length <= targetGroups) {
-    return sentences.map((s) => [s]);
-  }
+// Word-count-aware sentence grouping for retention pacing.
+//
+// Targets ~targetWordsPerScene words per group. Sentences shorter than that
+// are merged with their neighbour; sentences longer than 1.6× the target
+// stand alone. Result is bounded by [minScenes, maxScenes].
+//
+// Rationale: a hard "split into N equal groups" loses the natural rhythm of
+// the script. A 5-word punchline gets clumped with a 30-word setup, then
+// shows on screen for 8s when it should pop in 1.5s. Word-count grouping
+// keeps short beats short.
+function groupSentencesByWords(
+  sentences: string[],
+  targetWordsPerScene: number,
+  minScenes: number,
+  maxScenes: number
+): string[][] {
+  if (sentences.length === 0) return [];
+  if (sentences.length <= minScenes) return sentences.map((s) => [s]);
+
   const groups: string[][] = [];
-  const groupSize = Math.ceil(sentences.length / targetGroups);
-  for (let i = 0; i < sentences.length; i += groupSize) {
-    groups.push(sentences.slice(i, i + groupSize));
+  let current: string[] = [];
+  let currentWords = 0;
+  const longSentenceThreshold = Math.round(targetWordsPerScene * 1.6);
+
+  for (const sentence of sentences) {
+    const w = sentence.split(/\s+/).length;
+    // Long sentence stands alone (after flushing whatever's accumulated).
+    if (w >= longSentenceThreshold) {
+      if (current.length > 0) {
+        groups.push(current);
+        current = [];
+        currentWords = 0;
+      }
+      groups.push([sentence]);
+      continue;
+    }
+
+    current.push(sentence);
+    currentWords += w;
+
+    if (currentWords >= targetWordsPerScene) {
+      groups.push(current);
+      current = [];
+      currentWords = 0;
+    }
   }
+  if (current.length > 0) groups.push(current);
+
+  // Cap to maxScenes by merging the smallest adjacent pair.
+  while (groups.length > maxScenes) {
+    let smallestIdx = 0;
+    let smallestWords = Infinity;
+    for (let i = 0; i < groups.length - 1; i++) {
+      const pairWords = groups[i].join(" ").split(/\s+/).length + groups[i + 1].join(" ").split(/\s+/).length;
+      if (pairWords < smallestWords) {
+        smallestWords = pairWords;
+        smallestIdx = i;
+      }
+    }
+    groups.splice(smallestIdx, 2, [...groups[smallestIdx], ...groups[smallestIdx + 1]]);
+  }
+
+  // Pad up to minScenes by splitting the largest scene.
+  while (groups.length < minScenes && groups.some((g) => g.length > 1)) {
+    let biggestIdx = 0;
+    let biggestWords = 0;
+    for (let i = 0; i < groups.length; i++) {
+      const w = groups[i].join(" ").split(/\s+/).length;
+      if (w > biggestWords && groups[i].length > 1) {
+        biggestWords = w;
+        biggestIdx = i;
+      }
+    }
+    const target = groups[biggestIdx];
+    const half = Math.ceil(target.length / 2);
+    groups.splice(biggestIdx, 1, target.slice(0, half), target.slice(half));
+  }
+
   return groups;
 }
 
@@ -190,12 +309,27 @@ function extractKeywords(text: string): string[] {
     .filter((w) => w.length >= 4 && !STOPWORDS.has(w));
 }
 
+// Pull concrete visualizable nouns out of a scene's narration. These match
+// stock photo searches reliably, unlike abstract phrases.
+function extractConcreteNouns(narration: string): string[] {
+  const lower = narration.toLowerCase().replace(/[^a-z0-9\s]/g, "");
+  const found: string[] = [];
+  // Two-word checks first (e.g. "phone screen", "alarm clock").
+  for (const noun of VISUALIZABLE_NOUNS) {
+    if (noun.includes(" ") && lower.includes(noun)) found.push(noun);
+  }
+  // Then single-word nouns.
+  const words = lower.split(/\s+/);
+  for (const word of words) {
+    if (VISUALIZABLE_NOUNS.has(word) && !found.includes(word)) found.push(word);
+  }
+  return found;
+}
+
 function findVisualTheme(narration: string): string[] | null {
   const words = extractKeywords(narration);
-  // Direct theme match
   for (const word of words) {
     if (VISUAL_THEME_MAP[word]) return VISUAL_THEME_MAP[word];
-    // Partial match — theme keyword is a substring of a word
     for (const theme of Object.keys(VISUAL_THEME_MAP)) {
       if (word.includes(theme) || theme.includes(word)) {
         return VISUAL_THEME_MAP[theme];
@@ -205,35 +339,32 @@ function findVisualTheme(narration: string): string[] | null {
   return null;
 }
 
-function buildCinematicSearchTerms(
+// Search terms favour concrete nouns from the narration first, then a
+// topic-anchored noun, then the theme map (kept as last resort because its
+// terms are stylized and less reliable for stock photo APIs).
+function buildSearchTerms(
   narration: string,
-  purpose: VisualPurpose,
-  mode: VisualMode,
+  topicNouns: string[],
+  sceneIndex: number,
   scriptContext: string
 ): string[] {
+  const concrete = extractConcreteNouns(narration);
+  if (concrete.length >= 2) return concrete.slice(0, 2);
+  if (concrete.length === 1) {
+    return [concrete[0], topicNouns[sceneIndex % topicNouns.length]];
+  }
+
+  // No concrete noun — anchor to the topic so visuals stay coherent.
+  const a = topicNouns[sceneIndex % topicNouns.length];
+  const b = topicNouns[(sceneIndex + 1) % topicNouns.length];
+  if (a && b && a !== b) return [a, b];
+
+  // Last resort: theme map.
   const themeTerms = findVisualTheme(narration);
   if (themeTerms && themeTerms.length > 0) {
-    // Use up to 2 theme terms for specificity
     return themeTerms.slice(0, 2);
   }
-
-  // Fallback: build from keywords + shot type context
-  const keywords = extractKeywords(narration).slice(0, 3);
-  const shotTypes = SHOT_TYPE_BY_PURPOSE[purpose];
-  const shotPrefix = shotTypes[Math.floor(Math.random() * shotTypes.length)];
-  const context = CINEMATIC_CONTEXTS_BY_MODE[mode];
-
-  if (keywords.length === 0) {
-    return ["person quiet room contemplative", "single object desk close up"];
-  }
-
-  // Combine keyword with shot descriptor for specificity
-  const primary = `${shotPrefix} ${keywords[0]} ${keywords[1] ?? ""} ${context.split(",")[0]}`.trim();
-  const secondary = keywords[1]
-    ? `${keywords[1]} ${keywords[2] ?? keywords[0]} close up detail`
-    : `${keywords[0]} detail close up light`;
-
-  return [primary, secondary].map((t) => t.replace(/\s+/g, " ").trim());
+  return ["window light", "morning"];
 }
 
 function buildCinematicPrompt(
@@ -320,15 +451,31 @@ export async function generateDeterministic(
 ): Promise<ScenePlan[]> {
   const { minScenes, maxScenes, targetDurationSeconds } = options;
 
-  const sentences = splitIntoSentences(script);
-  const wordsTotal = script.split(/\s+/).length;
-  const estimatedDuration = (wordsTotal / 150) * 60;
-  const targetScenes = Math.round(
-    Math.max(minScenes, Math.min(maxScenes, (estimatedDuration / targetDurationSeconds) * maxScenes))
-  );
-  const numScenes = Math.max(minScenes, Math.min(maxScenes, targetScenes));
+  const allSentences = splitIntoSentences(script);
+  if (allSentences.length === 0) return [];
 
-  const groups = groupSentences(sentences, numScenes);
+  // Hook is always the first sentence on its own — short, fast, hard cut.
+  // Retention dies if the hook scene is 8+ seconds long.
+  const hookSentence = allSentences[0];
+  const restSentences = allSentences.slice(1);
+
+  // Target ~9 words per scene for snappy short-form pacing (≈ 3.5–4s at
+  // 150 wpm). For a 137-word 60s script that gives 13–15 scenes. Bumping
+  // this divisor pushes pacing slower; lowering it pushes pacing faster.
+  const targetWordsPerScene = Math.max(
+    5,
+    Math.round((targetDurationSeconds * 150) / 60 / 16)
+  );
+
+  const restGroups = groupSentencesByWords(
+    restSentences,
+    targetWordsPerScene,
+    Math.max(1, minScenes - 1),
+    maxScenes - 1
+  );
+  const groups = [[hookSentence], ...restGroups];
+
+  const topicNouns = inferTopicNouns(script);
   const usedModes: VisualMode[] = [];
   const scenes: ScenePlan[] = [];
 
@@ -348,7 +495,7 @@ export async function generateDeterministic(
 
     const mood = inferMood(narration);
 
-    const searchTerms = buildCinematicSearchTerms(narration, purpose, visualMode, script);
+    const searchTerms = buildSearchTerms(narration, topicNouns, i, script);
 
     const cinematicPrompt = buildCinematicPrompt(narration, purpose, visualMode, mood);
 
@@ -366,7 +513,9 @@ export async function generateDeterministic(
         ? "give the viewer a clear action to take"
         : "deepen the emotional or conceptual understanding",
       visualRole: ROLE_PATTERN[Math.min(i, ROLE_PATTERN.length - 1)],
-      pacing: PACING_PATTERN[Math.min(i, PACING_PATTERN.length - 1)],
+      pacing: isFirst
+        ? "fast"
+        : PACING_PATTERN[Math.min(i, PACING_PATTERN.length - 1)],
       durationHint: estimateDurationHint(narration),
       visualPurpose: purpose,
       cinematicPrompt,

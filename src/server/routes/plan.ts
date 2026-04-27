@@ -40,8 +40,8 @@ planRouter.post("/", async (req, res) => {
     const planOptions = {
       style,
       targetDurationSeconds: options?.targetDurationSeconds ?? 60,
-      minScenes: options?.minScenes ?? 4,
-      maxScenes: options?.maxScenes ?? 8,
+      minScenes: options?.minScenes ?? 8,
+      maxScenes: options?.maxScenes ?? 14,
     };
 
     const { scenes, provider } = await generateScenes(script, planOptions);

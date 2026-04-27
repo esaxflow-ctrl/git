@@ -27,28 +27,91 @@ export interface TermScore {
   reason: string;
 }
 
+// Concrete nouns that map cleanly to stock-photo searches. A single-word
+// query from this set is a STRONG search term, not a weak one — the old
+// scoring penalised brevity by default, which broke once the planner was
+// rewritten to use real noun queries instead of stylized phrases.
+const CONCRETE_PHOTO_NOUNS = new Set([
+  // Spaces / rooms
+  "phone", "desk", "office", "room", "bed", "kitchen", "bathroom", "hallway",
+  "window", "door", "mirror", "wall", "floor", "ceiling", "chair", "stool", "couch",
+  // Time of day / weather
+  "morning", "night", "evening", "sunrise", "sunset", "dawn", "dusk",
+  "rain", "fog", "smoke", "fire", "snow", "wind", "shadow", "storm",
+  // Food / drink
+  "coffee", "tea", "water", "food", "dish", "dishes", "sink", "plate", "cup", "knife", "stove", "ingredients",
+  // Body
+  "hand", "hands", "face", "eyes", "feet", "shoulder", "back", "head", "skin",
+  // Devices / tech
+  "screen", "notification", "email", "inbox", "message", "keyboard", "monitor",
+  "laptop", "computer", "tablet", "circuit", "data", "cable",
+  // Time / planning
+  "clock", "calendar", "watch", "timer", "alarm", "todo", "list", "schedule", "agenda",
+  // Stationery
+  "book", "pen", "paper", "notebook", "journal", "letter", "envelope", "page", "manuscript",
+  // Outdoors
+  "stairs", "park", "ocean", "mountain", "city", "street", "alley", "road", "bridge", "subway",
+  // Mess / clutter
+  "laundry", "trash", "mess", "clutter", "pile", "stack",
+  // Surfaces / materials
+  "reflection", "glass", "wood", "metal", "stone", "concrete",
+  // Light sources
+  "candle", "lamp", "neon", "headlight", "spotlight", "light",
+  // Movement
+  "running", "walking", "sitting", "standing", "sleeping", "waking", "run",
+  // Money
+  "wallet", "cash", "coin", "coins", "calculator", "bank",
+  // Sleep / rest
+  "pillow", "blanket", "alarm clock",
+  // Gym / fitness
+  "dumbbell", "treadmill", "sweat", "sneakers",
+  // Generic stand-alones
+  "empty", "vintage", "photo", "ruins", "statue",
+]);
+
 // Score a single search term for specificity. Returns 0–10.
 function scoreSingleTerm(term: string): TermScore {
-  const words = term.trim().split(/\s+/);
-  let score = 0;
+  const words = term.trim().toLowerCase().split(/\s+/);
   const reasons: string[] = [];
+  let score = 0;
 
-  // Reward multi-word phrases
-  if (words.length >= 5) { score += 4; reasons.push("long specific phrase"); }
-  else if (words.length >= 3) { score += 3; reasons.push("multi-word phrase"); }
-  else if (words.length === 2) { score += 2; reasons.push("two-word term"); }
-  else { score += 1; reasons.push("single word"); }
+  const allConcrete = words.every((w) => CONCRETE_PHOTO_NOUNS.has(w));
+  const hasConcreteNoun = words.some((w) => CONCRETE_PHOTO_NOUNS.has(w));
 
-  // Penalise generic words in the phrase
-  const genericCount = words.filter((w) => GENERIC_TERM_BLOCKLIST.has(w.toLowerCase())).length;
-  if (genericCount > 0) {
+  // Concrete nouns are the gold standard for stock-photo search.
+  if (words.length === 1 && allConcrete) {
+    score += 7;
+    reasons.push("concrete single-noun query");
+  } else if (words.length === 2 && allConcrete) {
+    score += 8;
+    reasons.push("concrete two-noun query");
+  } else if (hasConcreteNoun && words.length <= 4) {
+    score += 6;
+    reasons.push("contains concrete noun");
+  } else if (words.length >= 5) {
+    score += 4;
+    reasons.push("long specific phrase");
+  } else if (words.length >= 3) {
+    score += 3;
+    reasons.push("multi-word phrase");
+  } else if (words.length === 2) {
+    score += 2;
+    reasons.push("two-word term");
+  } else {
+    score += 1;
+    reasons.push("single word");
+  }
+
+  // Penalise generic-blocklist words (only when the term has no concrete anchor).
+  const genericCount = words.filter((w) => GENERIC_TERM_BLOCKLIST.has(w)).length;
+  if (genericCount > 0 && !hasConcreteNoun) {
     score -= genericCount * 2;
     reasons.push(`${genericCount} generic word(s)`);
   }
 
-  // Penalise phrases that are only shot descriptors
+  // Penalise phrases that are only shot descriptors.
   const contentWords = words.filter(
-    (w) => !SHOT_DESCRIPTOR_WORDS.has(w.toLowerCase()) && !GENERIC_TERM_BLOCKLIST.has(w.toLowerCase())
+    (w) => !SHOT_DESCRIPTOR_WORDS.has(w) && !GENERIC_TERM_BLOCKLIST.has(w)
   );
   if (contentWords.length === 0) {
     score -= 4;
@@ -56,12 +119,6 @@ function scoreSingleTerm(term: string): TermScore {
   } else if (contentWords.length < words.length / 2) {
     score -= 2;
     reasons.push("mostly shot descriptors");
-  }
-
-  // Reward concrete nouns (heuristic: capitalised mid-phrase, or known concrete words)
-  if (/[A-Z]/.test(term.slice(1))) {
-    score += 1;
-    reasons.push("contains proper noun");
   }
 
   const finalScore = Math.max(0, Math.min(10, score));

@@ -203,41 +203,39 @@ function scoreVoiceoverPacing(
   return clamp(score);
 }
 
-function scoreSceneVariety(scenes: ScenePlan[], warnings: string[], blockers: string[]): number {
-  const modeCounts: Record<string, number> = {};
-  for (const s of scenes) modeCounts[s.visualMode] = (modeCounts[s.visualMode] ?? 0) + 1;
-  const distinct = Object.keys(modeCounts).length;
-  const maxRatio = Math.max(...Object.values(modeCounts)) / scenes.length;
-
+// Variety score is content-driven now, not mode-driven. With every scene a
+// real (different) photo, the question is whether the photos look distinct
+// from each other — which Openverse / Pexels delivers based on unique
+// search terms. So variety = unique search terms across scenes + pacing
+// variation, not "did you use 3 different visual modes".
+function scoreSceneVariety(scenes: ScenePlan[], warnings: string[], _blockers: string[]): number {
   let score = 100;
-  if (distinct === 1) {
-    score = 0;
-    blockers.push("All scenes use the same visual mode.");
-  } else if (distinct === 2) {
-    score = 40;
-    warnings.push("Only 2 distinct visual modes across all scenes.");
-  } else if (maxRatio > 0.75) {
-    score = 55;
-    warnings.push("One visual mode dominates (>75% of scenes).");
-  } else if (maxRatio > 0.6) {
-    score = 75;
-  }
 
-  let runMax = 0;
-  let run = 0;
-  for (const s of scenes) {
-    if (s.visualMode === "stockImage" || s.visualMode === "stockVideo") {
-      run++;
-      runMax = Math.max(runMax, run);
-    } else {
-      run = 0;
-    }
-  }
-  if (runMax > 3) {
-    warnings.push(`${runMax} consecutive photo scenes — insert card scenes.`);
+  // Search-term uniqueness across scenes. Each scene contributes its
+  // primary term; we want most of them to be distinct.
+  const primaryTerms = scenes
+    .map((s) => (s.searchTerms[0] ?? "").toLowerCase().trim())
+    .filter(Boolean);
+  const distinctTerms = new Set(primaryTerms).size;
+  const termRatio = distinctTerms / Math.max(1, primaryTerms.length);
+  if (termRatio < 0.5) {
+    score -= 30;
+    warnings.push(`Only ${distinctTerms}/${primaryTerms.length} unique primary search terms — visuals will repeat.`);
+  } else if (termRatio < 0.7) {
     score -= 15;
+    warnings.push(`Some scenes share search terms — consider varying.`);
   }
 
+  // Scene-count check for retention pacing (12+ scenes for 60s ≈ ~5s avg).
+  if (scenes.length < 8) {
+    score -= 25;
+    warnings.push(`Only ${scenes.length} scenes — short-form retention prefers 12+ scene cuts per 60s.`);
+  } else if (scenes.length < 10) {
+    score -= 10;
+    warnings.push(`${scenes.length} scenes — could use more cuts for snappier pacing.`);
+  }
+
+  // Pacing variation.
   const pacingSet = new Set(scenes.map((s) => s.pacing));
   if (pacingSet.size === 1) {
     score -= 20;
@@ -245,6 +243,16 @@ function scoreSceneVariety(scenes: ScenePlan[], warnings: string[], blockers: st
   } else if (pacingSet.size >= 3) {
     score += 5;
   }
+
+  // Card-mode check: SVG card templates DO repeat visually, so cap them.
+  const cardCount = scenes.filter((s) =>
+    ["quoteCard", "evidenceCard", "textCard", "timelineCard", "gradientMotionCard", "mapCard"].includes(s.visualMode)
+  ).length;
+  if (cardCount / scenes.length > 0.2) {
+    score -= 20;
+    warnings.push(`${cardCount}/${scenes.length} scenes are typography cards — replace with photo scenes.`);
+  }
+
   return clamp(score);
 }
 

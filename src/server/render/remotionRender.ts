@@ -25,6 +25,17 @@ const MAX_DURATION_MS = 62_000;
  * After per-scene durations are computed, `enforceTotalDuration` adjusts the
  * timeline so the final video lands inside [MIN_DURATION_MS, MAX_DURATION_MS].
  */
+// Pacing-aware floor. Style presets set a global minSceneDurationMs (4–5s)
+// which is fine for the body of the video, but a "fast"-pacing hook scene
+// needs to be ~1.5s for retention — clamping it to 4s kills the cut. Each
+// scene's pacing now sets its own floor.
+const PACING_MIN_MS: Record<string, number> = {
+  fast: 1500,
+  medium: 3000,
+  slow: 4500,
+  dramatic_pause: 5500,
+};
+
 function computeSceneDurations(job: RenderJob): number[] {
   const { scenes, audioResults, styleProfile, audioEnabled } = job;
   const { pacingRules } = styleProfile;
@@ -40,13 +51,14 @@ function computeSceneDurations(job: RenderJob): number[] {
       return audio.durationMs + pacingRules.audioPaddingMs;
     }
 
-    // Silent / estimated path: clamp by pacing rules.
+    // Silent / estimated path: clamp using pacing-aware floor.
     const words = scene.narration.split(/\s+/).length;
     const estimated = (words / 150) * 60 * 1000 + pacingRules.defaultPaddingMs;
-    return Math.max(
+    const sceneFloor = Math.min(
       pacingRules.minSceneDurationMs,
-      Math.min(pacingRules.maxSceneDurationMs, estimated)
+      PACING_MIN_MS[scene.pacing] ?? pacingRules.minSceneDurationMs
     );
+    return Math.max(sceneFloor, Math.min(pacingRules.maxSceneDurationMs, estimated));
   });
 
   const rawTotalMs = raw.reduce((a, b) => a + b, 0);
