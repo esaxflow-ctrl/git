@@ -53,9 +53,9 @@ function SceneContent({
   const motion = effectiveMotion(style.motionStyle, scene.visualRole, scene.pacing);
   switch (asset.type) {
     case "stockVideo":
-      return <VideoScene asset={asset} motionStyle={motion} />;
+      return <VideoScene asset={asset} motionStyle={motion} style={style} />;
     case "stockImage":
-      return <ImageScene asset={asset} motionStyle={motion} />;
+      return <ImageScene asset={asset} motionStyle={motion} style={style} />;
     case "gradientMotionCard":
     case "mapCard":
       return <GradientMotionCardScene scene={scene} style={style} />;

@@ -112,6 +112,10 @@ export const ColorStrategySchema = z.object({
   overlayOpacity: z.number().min(0).max(0.8),
   vignetteStrength: z.number().min(0).max(1),
   tint: z.string().nullable(),
+  // CSS filter string applied to every photo so 11 different photos share
+  // one consistent film look (cohesion is what makes them feel like one
+  // video instead of a stock-photo Pinterest board).
+  imageFilter: z.string().optional(),
 });
 export type ColorStrategy = z.infer<typeof ColorStrategySchema>;
 

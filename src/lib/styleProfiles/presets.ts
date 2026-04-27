@@ -6,13 +6,13 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
     name: "Dark Cinematic",
     tone: "intense, atmospheric, filmic",
     captionStyle: {
-      fontFamily: "'Georgia', serif",
-      fontSize: 52,
+      fontFamily: "'Inter', 'Helvetica Neue', Arial, sans-serif",
+      fontSize: 64,
       color: "#ffffff",
-      highlightColor: "#e94560",
-      animation: "phrase_slide",
+      highlightColor: "#ffd400",
+      animation: "word_pop",
       position: "bottom",
-      maxWordsPerGroup: 4,
+      maxWordsPerGroup: 3,
     },
     motionStyle: "ken_burns",
     transitionStyle: "fade",
@@ -21,6 +21,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       overlayOpacity: 0.4,
       vignetteStrength: 0.7,
       tint: null,
+      imageFilter: "brightness(0.78) contrast(1.18) saturate(0.7)",
     },
     narrationStyle: "dramatic",
     visualMixRules: {
@@ -56,6 +57,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       overlayOpacity: 0.25,
       vignetteStrength: 0.4,
       tint: null,
+      imageFilter: "brightness(0.92) contrast(1.05) saturate(0.88)",
     },
     narrationStyle: "authoritative",
     visualMixRules: {
@@ -91,6 +93,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       overlayOpacity: 0.5,
       vignetteStrength: 0.85,
       tint: "#0d0020",
+      imageFilter: "brightness(0.7) contrast(1.3) saturate(1.4) hue-rotate(-10deg)",
     },
     narrationStyle: "conspiratorial",
     visualMixRules: {
@@ -126,6 +129,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       overlayOpacity: 0.3,
       vignetteStrength: 0.3,
       tint: null,
+      imageFilter: "brightness(0.95) contrast(1.15) saturate(1.05)",
     },
     narrationStyle: "urgent",
     visualMixRules: {
@@ -161,6 +165,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       overlayOpacity: 0.6,
       vignetteStrength: 0.9,
       tint: "#200000",
+      imageFilter: "brightness(0.55) contrast(1.35) saturate(0.55) sepia(0.15)",
     },
     narrationStyle: "dramatic",
     visualMixRules: {
@@ -196,6 +201,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       overlayOpacity: 0.2,
       vignetteStrength: 0.5,
       tint: null,
+      imageFilter: "brightness(0.95) contrast(1.2) saturate(1.15)",
     },
     narrationStyle: "calm",
     visualMixRules: {
@@ -231,6 +237,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       overlayOpacity: 0.25,
       vignetteStrength: 0.4,
       tint: null,
+      imageFilter: "brightness(0.98) contrast(1.18) saturate(1.1)",
     },
     narrationStyle: "urgent",
     visualMixRules: {

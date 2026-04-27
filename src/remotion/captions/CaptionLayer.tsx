@@ -47,9 +47,13 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
   const words = activeEntry.text.split(" ");
   const emphasisSet = new Set(activeEntry.emphasisWords.map((w) => w.toLowerCase()));
 
+  // Thick black stroke rendered as 8 offset text-shadows — readable on
+  // any background, no pill needed. Multiplied by 2 for the emphasis word.
+  const STROKE = "-3px -3px 0 #000, 3px -3px 0 #000, -3px 3px 0 #000, 3px 3px 0 #000, 0 -3px 0 #000, 0 3px 0 #000, -3px 0 0 #000, 3px 0 0 #000, 0 6px 18px rgba(0,0,0,0.85)";
+
   function renderWordPop() {
     return (
-      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "6px 10px" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: "8px 14px" }}>
         {words.map((word, i) => {
           const clean = word.toLowerCase().replace(/[^a-z]/g, "");
           const isEmphasis = emphasisSet.has(clean);
@@ -62,14 +66,15 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
             <span
               key={i}
               style={{
-                fontSize: isEmphasis ? fontSize * 1.18 : fontSize,
+                fontSize: isEmphasis ? fontSize * 1.22 : fontSize,
                 fontFamily,
-                fontWeight: isEmphasis ? 900 : 800,
+                fontWeight: 900,
                 color: isEmphasis ? highlightColor : color,
                 transform: `scale(${interpolate(wp, [0, 1], [0.7, isEmphasis ? 1.12 : 1.0])})`,
                 display: "inline-block",
-                textShadow: "0 3px 12px rgba(0,0,0,0.9)",
-                WebkitTextStroke: "1px rgba(0,0,0,0.3)",
+                textShadow: STROKE,
+                letterSpacing: -1,
+                lineHeight: 1.1,
               }}
             >
               {word}
@@ -90,12 +95,12 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
           opacity,
           fontSize,
           fontFamily,
-          fontWeight: 800,
+          fontWeight: 900,
           color,
           textAlign: "center",
-          textShadow: "0 3px 14px rgba(0,0,0,0.95)",
-          lineHeight: 1.25,
-          WebkitTextStroke: "1px rgba(0,0,0,0.25)",
+          textShadow: STROKE,
+          letterSpacing: -1,
+          lineHeight: 1.15,
         }}
       >
         {activeEntry.text}
@@ -110,9 +115,11 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
         style={{
           fontSize,
           fontFamily,
-          fontWeight: 800,
+          fontWeight: 900,
           textAlign: "center",
-          lineHeight: 1.25,
+          lineHeight: 1.15,
+          letterSpacing: -1,
+          textShadow: STROKE,
         }}
       >
         {activeEntry.text.split("").map((char, i) => (
@@ -120,10 +127,6 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
             key={i}
             style={{
               color: i <= charProgress ? highlightColor : color,
-              textShadow:
-                i <= charProgress
-                  ? `0 0 22px ${highlightColor}77, 0 2px 8px rgba(0,0,0,0.9)`
-                  : "0 2px 8px rgba(0,0,0,0.85)",
             }}
           >
             {char}
@@ -140,11 +143,12 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
         style={{
           fontSize,
           fontFamily,
-          fontWeight: 800,
+          fontWeight: 900,
           color,
           textAlign: "center",
-          textShadow: "0 2px 10px rgba(0,0,0,0.9)",
-          lineHeight: 1.25,
+          textShadow: STROKE,
+          letterSpacing: -1,
+          lineHeight: 1.15,
         }}
       >
         {activeEntry.text.slice(0, charCount)}
@@ -169,6 +173,12 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
       content = renderPhraseSlide();
   }
 
+  // No background pill. Modern short-form captions sit directly on the
+  // photo with a thick black stroke for legibility — that's the look
+  // the user asked for ("not a quote-card box"). Stroke is rendered via
+  // multiple text-shadow offsets, which is the only way Remotion's
+  // Chromium can draw a real outline without WebKitTextStroke clipping
+  // the glyphs at extreme weights.
   return (
     <div
       style={{
@@ -176,24 +186,13 @@ export function CaptionLayer({ captionEntries, style, compositionOffsetMs = 0 }:
         left: 0,
         right: 0,
         ...positionStyle,
-        padding: "0 48px",
+        padding: "0 56px",
         zIndex: 10,
         display: "flex",
         justifyContent: "center",
       }}
     >
-      <div
-        style={{
-          background: "rgba(0,0,0,0.52)",
-          borderRadius: 18,
-          padding: "18px 32px",
-          maxWidth: "88%",
-          backdropFilter: "blur(6px)",
-          border: "1px solid rgba(255,255,255,0.07)",
-        }}
-      >
-        {content}
-      </div>
+      <div style={{ maxWidth: "92%" }}>{content}</div>
     </div>
   );
 }

@@ -1,12 +1,13 @@
 import { useCurrentFrame, useVideoConfig, interpolate, Easing } from "remotion";
-import { VisualAsset, MotionStyle } from "../../lib/validation/schemas";
+import { VisualAsset, MotionStyle, StyleProfile } from "../../lib/validation/schemas";
 
 interface Props {
   asset: VisualAsset;
   motionStyle: MotionStyle;
+  style?: StyleProfile;
 }
 
-export function ImageScene({ asset, motionStyle }: Props) {
+export function ImageScene({ asset, motionStyle, style }: Props) {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
@@ -75,6 +76,10 @@ export function ImageScene({ asset, motionStyle }: Props) {
           objectPosition: "center",
           transform,
           transformOrigin: "center center",
+          // Style-driven film grade: brightness/contrast/saturate values come
+          // from the active style preset's colorStrategy.imageFilter so 11
+          // different photos share one tonal look across the cut.
+          filter: style?.colorStrategy.imageFilter ?? undefined,
         }}
       />
     </div>

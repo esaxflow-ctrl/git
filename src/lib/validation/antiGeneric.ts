@@ -226,15 +226,17 @@ export function detectVisualRepetition(scenes: ScenePlan[]): string[] {
   for (let i = 1; i < scenes.length; i++) {
     const prev = scenes[i - 1];
     const curr = scenes[i];
-    if (prev.visualMode === curr.visualMode) {
-      const sharedTerms = prev.searchTerms.filter((t) =>
-        curr.searchTerms.includes(t)
+    if (prev.visualMode !== curr.visualMode) continue;
+
+    // Only flag when scenes share their PRIMARY term — secondary-term overlap
+    // is fine because the photo provider keys off the primary search and
+    // returns a totally different image.
+    const prevPrimary = (prev.searchTerms[0] ?? "").toLowerCase().trim();
+    const currPrimary = (curr.searchTerms[0] ?? "").toLowerCase().trim();
+    if (prevPrimary && prevPrimary === currPrimary) {
+      warnings.push(
+        `Scenes ${i} and ${i + 1} share primary term "${prevPrimary}" — same photo will repeat.`
       );
-      if (sharedTerms.length > 0) {
-        warnings.push(
-          `Scenes ${i} and ${i + 1} share mode "${curr.visualMode}" and terms [${sharedTerms.join(", ")}]. They may look similar.`
-        );
-      }
     }
   }
   return warnings;

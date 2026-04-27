@@ -1,12 +1,13 @@
 import { useCurrentFrame, useVideoConfig, interpolate, Easing, Video, Img } from "remotion";
-import { VisualAsset, MotionStyle } from "../../lib/validation/schemas";
+import { VisualAsset, MotionStyle, StyleProfile } from "../../lib/validation/schemas";
 
 interface Props {
   asset: VisualAsset;
   motionStyle: MotionStyle;
+  style?: StyleProfile;
 }
 
-export function VideoScene({ asset, motionStyle }: Props) {
+export function VideoScene({ asset, motionStyle, style }: Props) {
   const frame = useCurrentFrame();
   const { durationInFrames } = useVideoConfig();
 
@@ -78,6 +79,7 @@ export function VideoScene({ asset, motionStyle }: Props) {
           objectFit: "cover",
           transform,
           transformOrigin: "center center",
+          filter: style?.colorStrategy.imageFilter ?? undefined,
         }}
         muted
       />
