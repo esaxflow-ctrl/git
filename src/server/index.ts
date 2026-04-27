@@ -1,3 +1,8 @@
+// Load .env first — every other module that reads process.env (provider
+// keys, port, cache paths) imports below this line, so the side effect
+// must happen before they execute.
+import "dotenv/config";
+
 import express from "express";
 import cors from "cors";
 import path from "path";
