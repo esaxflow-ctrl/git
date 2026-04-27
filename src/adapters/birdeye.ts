@@ -177,7 +177,10 @@ export class BirdeyeAdapter {
   }
 
   async trendingTokens(limit = 50): Promise<{ address: string; symbol: string; rank: number }[]> {
-    if (!this.apiKey) return [];
+    if (!this.apiKey) {
+      if (process.env.BIRDEYE_DEBUG) console.warn('[birdeye] trendingTokens: no apiKey set');
+      return [];
+    }
     if (this.trendingCache && Date.now() - this.trendingCache.ts < CACHE_TTL_SHORT_MS) {
       return this.trendingCache.entries.slice(0, limit);
     }
@@ -185,12 +188,30 @@ export class BirdeyeAdapter {
     const url = `${BASE}/defi/token_trending?sort_by=rank&sort_type=asc&offset=0&limit=${limit}`;
     try {
       const r = await fetch(url, { headers: this.headers() });
-      if (!r.ok) return [];
-      const j = (await r.json()) as { data?: { tokens?: Array<{ address: string; symbol: string; rank: number }> } };
+      if (!r.ok) {
+        const body = await r.text().catch(() => '');
+        console.warn(
+          `[birdeye] trendingTokens: HTTP ${r.status} ${r.statusText} — ${body.slice(0, 200)}`,
+        );
+        return [];
+      }
+      const j = (await r.json()) as {
+        data?: { tokens?: Array<{ address: string; symbol: string; rank: number }> };
+        success?: boolean;
+        message?: string;
+      };
       const entries = j.data?.tokens ?? [];
+      if (entries.length === 0) {
+        console.warn(
+          `[birdeye] trendingTokens: parsed 0 tokens (success=${j.success}, message=${j.message ?? 'none'}, top-level keys=${Object.keys(j).join(',')})`,
+        );
+      }
       this.trendingCache = { entries, ts: Date.now() };
       return entries.slice(0, limit);
-    } catch {
+    } catch (e) {
+      console.warn(
+        `[birdeye] trendingTokens: fetch failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
       return [];
     }
   }
