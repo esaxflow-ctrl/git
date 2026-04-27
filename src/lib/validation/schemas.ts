@@ -286,7 +286,7 @@ export const SynthesizeResponseSchema = z.object({
       wordTimings: z.array(WordTimingSchema).nullable(),
     })
   ),
-  provider: z.enum(["kokoro", "piper", "silent"]),
+  provider: z.enum(["kokoro", "piper", "macos_say", "winsay", "silent"]),
   totalDurationMs: z.number(),
 });
 export type SynthesizeResponse = z.infer<typeof SynthesizeResponseSchema>;
