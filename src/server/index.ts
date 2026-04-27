@@ -74,6 +74,7 @@ async function start() {
     console.info(`[server] Pexels API: ${process.env.PEXELS_API_KEY ? "✓" : "✗ (using generated graphics)"}`);
     console.info(`[server] Pixabay API: ${process.env.PIXABAY_API_KEY ? "✓" : "✗"}`);
     console.info(`[server] OpenRouter: ${process.env.OPENROUTER_API_KEY ? "✓" : "✗"}`);
+    console.info(`[server] ElevenLabs: ${process.env.ELEVENLABS_API_KEY ? "✓" : "✗"}`);
     console.info(`[server] Ollama: ${process.env.OLLAMA_BASE_URL ?? "http://localhost:11434"}`);
     console.info(`[server] Kokoro TTS: ${process.env.KOKORO_BASE_URL ?? "http://localhost:8880"}`);
   });

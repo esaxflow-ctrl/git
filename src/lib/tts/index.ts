@@ -1,11 +1,12 @@
 import { AudioResult, VoiceOptions, ScenePlan } from "../validation/schemas";
 import { audioCache, audioCacheKey } from "../cache";
+import { isElevenLabsAvailable, synthesizeWithElevenLabs } from "./elevenlabs";
 import { isKokoroAvailable, synthesizeWithKokoro } from "./kokoro";
 import { isPiperAvailable, synthesizeWithPiper } from "./piper";
 import { isMacosSayAvailable, synthesizeWithMacosSay } from "./macos";
 import { isWinSayAvailable, synthesizeWithWinSay } from "./winsay";
 
-export type TtsProvider = "kokoro" | "piper" | "macos_say" | "winsay" | "silent";
+export type TtsProvider = "kokoro" | "piper" | "macos_say" | "winsay" | "elevenlabs" | "silent";
 
 export interface TtsResult {
   audioResults: AudioResult[];
@@ -47,6 +48,9 @@ async function synthesizeOne(
     case "winsay":
       result = await synthesizeWithWinSay(text, options);
       break;
+    case "elevenlabs":
+      result = await synthesizeWithElevenLabs(text, options);
+      break;
     default:
       result = { ...SILENT_RESULT, durationMs: estimateSilentDuration(text) };
   }
@@ -69,6 +73,10 @@ export async function synthesizeScenes(
 
   if (demo) {
     console.info("[tts] DEMO_MODE=1 — forcing silent fallback");
+  } else if (isElevenLabsAvailable()) {
+    // Best voice in the system — real-person realism. Counts against
+    // the user's monthly char quota, so we honour DEMO_MODE skip above.
+    provider = "elevenlabs";
   } else if (await isKokoroAvailable()) {
     provider = "kokoro";
   } else if (isPiperAvailable()) {
