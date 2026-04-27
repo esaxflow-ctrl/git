@@ -368,6 +368,70 @@ function extractConcreteNouns(narration: string): string[] {
   return found;
 }
 
+// Words that are technically nouns but search terribly on stock photo APIs
+// — they return either nothing useful or generic abstract imagery. We
+// blocklist them when scanning narration, falling through to either a
+// concrete noun match or the topic anchor.
+const ABSTRACT_BLOCKLIST = new Set([
+  // Generic placeholders
+  "thing", "things", "idea", "ideas", "way", "ways", "part", "parts",
+  "stuff", "kind", "kinds", "type", "types", "version", "versions",
+  "piece", "pieces", "matter", "matters", "factor", "factors", "aspect",
+  "aspects", "level", "levels", "amount", "answer", "answers", "question",
+  "questions", "problem", "problems", "solution", "solutions", "system",
+  "systems", "process", "processes", "approach", "method", "methods",
+  "technique", "techniques", "trick", "tricks", "tip", "tips",
+  "moment", "moments", "fact", "facts", "truth", "truths", "result",
+  "results", "thought", "thoughts", "feeling", "feelings", "emotion",
+  "emotions", "experience", "experiences", "reason", "reasons",
+  // Indefinite & demonstrative pronouns
+  "something", "anything", "nothing", "everything", "someone",
+  "anyone", "everyone", "yourself", "themselves", "themself",
+  "ourselves", "myself", "himself", "herself",
+  // Vague adverbs / connectors that survive stopword filtering
+  "next", "once", "whatever", "wherever", "whenever", "however",
+  "somewhere", "anywhere", "nowhere", "everywhere",
+  "really", "actually", "literally", "basically", "exactly",
+  "almost", "always", "never", "often", "sometimes", "usually",
+  // Weak verbs that produce confusing photo results
+  "make", "makes", "made", "take", "takes", "took", "give", "gives",
+  "gave", "want", "wants", "wanted", "need", "needs", "needed",
+  "tell", "tells", "told", "say", "says", "said",
+]);
+
+// Extract the most photographable words from a narration line. Prefers
+// known concrete nouns, then any non-stopword non-abstract content word.
+// Used as the PRIMARY search term per scene so each scene gets its own
+// photo tied to its own line, not the cycling topic anchor.
+function extractNarrationKeywords(narration: string, max = 2): string[] {
+  const lower = narration.toLowerCase().replace(/[^a-z0-9\s]/g, " ");
+
+  // First pass: two-word concrete nouns ("phone screen", "alarm clock").
+  const found: string[] = [];
+  for (const noun of VISUALIZABLE_NOUNS) {
+    if (noun.includes(" ") && lower.includes(noun)) found.push(noun);
+  }
+
+  // Second pass: single-word concrete nouns.
+  const words = lower.split(/\s+/).filter(Boolean);
+  for (const word of words) {
+    if (VISUALIZABLE_NOUNS.has(word) && !found.includes(word)) found.push(word);
+  }
+
+  // Third pass: any 4+-char content word that isn't a stopword or abstract.
+  // These won't be perfect Pexels matches but they're better than reusing
+  // the topic anchor for every scene.
+  for (const word of words) {
+    if (found.length >= max) break;
+    if (word.length < 4) continue;
+    if (STOPWORDS.has(word)) continue;
+    if (ABSTRACT_BLOCKLIST.has(word)) continue;
+    if (!found.includes(word)) found.push(word);
+  }
+
+  return found.slice(0, max);
+}
+
 function findVisualTheme(narration: string): string[] | null {
   const words = extractKeywords(narration);
   for (const word of words) {
@@ -384,29 +448,44 @@ function findVisualTheme(narration: string): string[] | null {
 // Search terms favour concrete nouns from the narration first, then a
 // topic-anchored noun, then the theme map (kept as last resort because its
 // terms are stylized and less reliable for stock photo APIs).
+// Per-scene search terms. Strategy:
+// 1. Pull a keyword from the narration line itself — that's the PRIMARY
+//    term, so each scene gets a photo tied to its own line.
+// 2. Use the topic anchor as the SECONDARY term — keeps overall visual
+//    coherence ("we're still in the procrastination world") even when
+//    individual narration words are abstract.
+// 3. Track what we've used per render so two scenes don't end up with
+//    the same primary keyword (which would produce identical Pexels
+//    photos).
 function buildSearchTerms(
   narration: string,
   topicNouns: string[],
   sceneIndex: number,
-  scriptContext: string
+  scriptContext: string,
+  usedPrimary: Set<string>
 ): string[] {
-  const concrete = extractConcreteNouns(narration);
-  if (concrete.length >= 2) return concrete.slice(0, 2);
-  if (concrete.length === 1) {
-    return [concrete[0], topicNouns[sceneIndex % topicNouns.length]];
+  const candidates = extractNarrationKeywords(narration, 4);
+  let primary = candidates.find((c) => !usedPrimary.has(c));
+
+  // If every narration candidate was already used, cycle the topic anchor.
+  if (!primary) {
+    primary = topicNouns[sceneIndex % topicNouns.length];
+    let cursor = 1;
+    while (usedPrimary.has(primary) && cursor < topicNouns.length) {
+      primary = topicNouns[(sceneIndex + cursor) % topicNouns.length];
+      cursor++;
+    }
   }
 
-  // No concrete noun — anchor to the topic so visuals stay coherent.
-  const a = topicNouns[sceneIndex % topicNouns.length];
-  const b = topicNouns[(sceneIndex + 1) % topicNouns.length];
-  if (a && b && a !== b) return [a, b];
+  usedPrimary.add(primary);
 
-  // Last resort: theme map.
-  const themeTerms = findVisualTheme(narration);
-  if (themeTerms && themeTerms.length > 0) {
-    return themeTerms.slice(0, 2);
+  // Secondary term — topic anchor different from the primary, for cohesion.
+  let secondary = topicNouns[sceneIndex % topicNouns.length];
+  if (secondary === primary) {
+    secondary = topicNouns[(sceneIndex + 1) % topicNouns.length];
   }
-  return ["window light", "morning"];
+
+  return secondary && secondary !== primary ? [primary, secondary] : [primary];
 }
 
 function buildCinematicPrompt(
@@ -519,6 +598,7 @@ export async function generateDeterministic(
 
   const topicNouns = inferTopicNouns(script);
   const usedModes: VisualMode[] = [];
+  const usedPrimary = new Set<string>();
   const scenes: ScenePlan[] = [];
 
   for (let i = 0; i < groups.length; i++) {
@@ -537,7 +617,7 @@ export async function generateDeterministic(
 
     const mood = inferMood(narration);
 
-    const searchTerms = buildSearchTerms(narration, topicNouns, i, script);
+    const searchTerms = buildSearchTerms(narration, topicNouns, i, script, usedPrimary);
 
     const cinematicPrompt = buildCinematicPrompt(narration, purpose, visualMode, mood);
 

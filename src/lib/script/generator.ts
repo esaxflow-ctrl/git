@@ -3,6 +3,7 @@ import { buildScriptPrompt, ScriptPromptInput } from "./prompt";
 import { validateScript, ScriptValidationResult } from "./validate";
 import { parseLlmJson, coerceStringArray } from "../llm/repair";
 import { pickTemplate, fillTemplate } from "./templateFiller";
+import { polishScript } from "./polish";
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "mistral";
@@ -322,9 +323,22 @@ export async function generateScript(
   // Default path: curated template library.
   const template = pickTemplate(input);
   console.info(`[script] Generating via template: ${template.id} (${template.name})`);
-  const generated = fillTemplate(template, input);
-  const validation = validateScript(generated.script);
-  return { generated, provider: "deterministic", validation };
+  const filled = fillTemplate(template, input);
+
+  // Optional polish pass — opt-in via ENABLE_SCRIPT_POLISH=1. Rewrites the
+  // filled template in punchier conversational language while preserving
+  // structure / hook length / word count. Falls back silently if Ollama
+  // is unreachable or the polish output fails sanity gates.
+  const polishResult = await polishScript(filled);
+  const finalGenerated = polishResult.polished;
+  if (polishResult.applied) {
+    console.info("[script] Polish applied");
+  } else if (process.env.ENABLE_SCRIPT_POLISH === "1") {
+    console.info(`[script] Polish skipped: ${polishResult.reason ?? "(unknown)"}`);
+  }
+
+  const validation = validateScript(finalGenerated.script);
+  return { generated: finalGenerated, provider: "deterministic", validation };
 }
 
 // Kept for back-compat — older deterministic generator. Not called by the
