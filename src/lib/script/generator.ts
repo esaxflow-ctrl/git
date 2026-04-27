@@ -129,18 +129,25 @@ function deterministicScript(input: ScriptPromptInput): GeneratedScript {
   const topic = input.topic.trim();
   const niche = input.niche ?? "this";
 
-  // Hook: 3–5 words pulled from the topic. We keep the hook itself ≤ 6 words
-  // (~2.4s at 150 wpm) so the structural validator passes.
+  // Hook: ≤ 4 topic words + " lies to you." → ≤ 7 words total, ~2.4s at
+  // 150 wpm. The structural validator wants ≤ 2.5s; the brief wants ≤ 3s
+  // for retention. Aggressively truncating the topic phrase is fine — the
+  // hook only needs to point at the subject, not describe it.
   const topicWords = topic.replace(/[.,;:!?]+$/g, "").split(/\s+/);
-  // Drop trailing connector words that produce broken phrases like
+  // Drop connector words that produce broken phrases like
   // "procrastinating simple tasks because they".
-  const stopAtConnectors = new Set(["because", "and", "but", "while", "since", "though", "they", "the"]);
+  const stopAtConnectors = new Set([
+    "because", "and", "but", "while", "since", "though", "they", "the",
+    "with", "without", "from", "for", "about", "of", "on", "in", "at",
+    "to", "as", "if", "when", "than", "that", "this", "these", "those",
+  ]);
   const hookWords: string[] = [];
-  for (const w of topicWords.slice(0, 5)) {
+  for (const w of topicWords) {
+    if (hookWords.length >= 3) break;
     if (stopAtConnectors.has(w.toLowerCase())) break;
     hookWords.push(w);
   }
-  const hookCore = hookWords.join(" ").trim() || topicWords.slice(0, 3).join(" ");
+  const hookCore = hookWords.join(" ").trim() || topicWords.slice(0, 2).join(" ");
   const hook = `${hookCore} lies to you.`;
 
   // Setup — ~15 words.

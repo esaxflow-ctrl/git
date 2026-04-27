@@ -190,25 +190,67 @@ const VISUALIZABLE_NOUNS = new Set([
 // Topic anchors — used when a scene has no concrete noun in its narration.
 // Picks a relevant noun based on the script's overall topic so the visuals
 // stay coherent across the whole video instead of jumping to random photos.
+//
+// Each pattern uses \b word-boundary so substrings inside other words don't
+// false-match (e.g. /ai/ used to fire on "trains", routing psychology
+// scripts to the tech anchor). Each list has 12+ nouns so an 11-scene
+// video doesn't run out of distinct primary terms.
 const TOPIC_ANCHORS: Array<{ pattern: RegExp; nouns: string[] }> = [
-  { pattern: /procrastinat|avoid|delay|later|put off/i, nouns: ["phone", "desk", "todo list", "calendar", "morning", "laundry"] },
-  { pattern: /anxiet|stress|overwhelm|panic/i, nouns: ["hands", "phone", "window rain", "ceiling", "dark room"] },
-  { pattern: /sleep|tired|insomnia|exhaust/i, nouns: ["bed", "ceiling", "alarm clock", "window night", "pillow"] },
-  { pattern: /money|finance|invest|saving|budget/i, nouns: ["coins", "wallet", "cash", "calculator", "bank"] },
-  { pattern: /history|ancient|war|empire/i, nouns: ["old book", "ruins", "statue", "manuscript", "vintage photo"] },
-  { pattern: /tech|ai|computer|software/i, nouns: ["laptop", "screen", "keyboard", "circuit", "data"] },
-  { pattern: /food|cook|eat|diet|meal/i, nouns: ["kitchen", "knife cutting", "plate", "ingredients", "stove"] },
-  { pattern: /workout|gym|fit|exercise/i, nouns: ["dumbbell", "running", "treadmill", "sweat", "morning run"] },
-  { pattern: /relationship|love|break|partner/i, nouns: ["window", "empty chair", "phone", "rain", "hallway"] },
-  { pattern: /focus|distraction|attention/i, nouns: ["phone screen", "notification", "desk", "window", "coffee"] },
-  { pattern: /habit|routine|pattern/i, nouns: ["calendar", "morning", "coffee", "alarm clock", "sneakers"] },
+  {
+    pattern: /\b(procrastinat\w*|avoid\w*|delay\w*|put off|low.?stake)/i,
+    nouns: ["phone", "desk", "todo list", "calendar", "morning", "laundry", "unread email", "messy desk", "coffee", "alarm clock", "trash", "kitchen sink"],
+  },
+  {
+    pattern: /\b(anxiet\w*|stress|overwhelm\w*|panic\w*|worry)/i,
+    nouns: ["hands trembling", "phone", "rain window", "ceiling", "dark room", "racing thoughts", "crowded street", "deep breath", "clock", "empty bed", "tight chest", "alone night"],
+  },
+  {
+    pattern: /\b(sleep|tired|insomnia|exhaust\w*|fatigue)/i,
+    nouns: ["bed", "ceiling", "alarm clock", "pillow", "moon window", "empty bed", "dark room", "blanket", "tea cup", "dawn", "yawn", "tired eyes"],
+  },
+  {
+    pattern: /\b(money|finance|invest\w*|saving|budget|wealth|debt)/i,
+    nouns: ["coins", "wallet", "cash", "calculator", "bank", "grocery cart", "receipt", "credit card", "atm", "hundred dollar", "piggy bank", "spreadsheet"],
+  },
+  {
+    pattern: /\b(history|ancient|war|empire|century|medieval|roman)/i,
+    nouns: ["old book", "ruins", "statue", "manuscript", "vintage photo", "castle", "cobblestone", "stone arch", "marble pillar", "rusty key", "candle", "scroll"],
+  },
+  {
+    pattern: /\b(technolog\w*|computer|software|coding|programmer)/i,
+    nouns: ["laptop", "screen", "keyboard", "circuit", "data", "code", "monitor", "fiber cable", "server room", "led light", "phone", "office desk"],
+  },
+  {
+    pattern: /\b(food|cook\w*|eat\w*|diet|meal|recipe|hungry)/i,
+    nouns: ["kitchen", "knife cutting", "plate", "ingredients", "stove", "cutting board", "bread", "vegetables", "fork", "steam", "salt", "pan"],
+  },
+  {
+    pattern: /\b(workout|gym|fit\w*|exercise|run+ing|cardio|muscle)/i,
+    nouns: ["dumbbell", "running", "treadmill", "sweat", "morning run", "sneakers", "barbell", "yoga mat", "track", "stretch", "water bottle", "stairs"],
+  },
+  {
+    pattern: /\b(relationship|love|breakup|partner|dating|romanc\w*)/i,
+    nouns: ["window", "empty chair", "phone", "rain", "hallway", "two coffee cups", "candle", "couple silhouette", "sunset walk", "old letter", "mirror", "park bench"],
+  },
+  {
+    pattern: /\b(focus|distract\w*|attention|concentrat\w*|productivit\w*)/i,
+    nouns: ["phone screen", "notification", "desk", "window", "coffee", "headphones", "open book", "morning sun", "notebook", "lamp", "single candle", "quiet room"],
+  },
+  {
+    pattern: /\b(habit|routine|pattern|discipline|consistency)/i,
+    nouns: ["calendar", "morning", "coffee", "alarm clock", "sneakers", "running shoes", "journal", "open book", "sunrise", "todo list", "kitchen", "desk lamp"],
+  },
+  {
+    pattern: /\b(psycholog\w*|mind|brain|emotion\w*|feeling)/i,
+    nouns: ["mirror", "face", "thinking", "open book", "window", "alone", "silhouette", "shadow", "notebook", "head in hands", "morning light", "empty room"],
+  },
 ];
 
 function inferTopicNouns(script: string): string[] {
   for (const anchor of TOPIC_ANCHORS) {
     if (anchor.pattern.test(script)) return anchor.nouns;
   }
-  return ["window", "morning", "hands", "desk", "phone screen", "city street"];
+  return ["window", "morning", "hands", "desk", "phone screen", "city street", "coffee cup", "empty chair", "open book", "rain window", "dim room", "mirror"];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
