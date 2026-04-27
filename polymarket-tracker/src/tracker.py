@@ -266,15 +266,17 @@ class Tracker:
     async def _discover_wallets_from_markets(self) -> list[dict]:
         """Discover active traders from the Polygon blockchain (public, no auth required).
 
-        Polymarket runs on Polygon. Every trade emits ERC-1155 TransferSingle events on the
-        Gnosis CTF contract. The 'to' topic is the buyer's proxy wallet — always indexed,
-        always public. We collect these addresses from recent blocks using free RPC endpoints.
+        Queries eth_getLogs on Polymarket's CLOB Exchange contracts for recent OrderFilled
+        events. maker/taker in each event are proxy wallet addresses — indexed, always public.
         """
         import aiohttp as _aiohttp
 
-        # Gnosis Conditional Tokens Framework — the ERC-1155 contract all Polymarket
-        # positions are minted/transferred through. Stable address, never changes.
-        CTF_CONTRACT = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
+        # Polymarket CLOB Exchange contracts on Polygon (emit OrderFilled with maker/taker)
+        # Using exchange contracts rather than the CTF token to avoid log-size limits.
+        CONTRACTS = [
+            "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",  # CLOB Exchange
+            "0xC5d563A36AE78145C45a50134d48A1215220f80a",  # Neg Risk Exchange
+        ]
 
         # Free public Polygon RPC endpoints (no API key needed)
         RPC_ENDPOINTS = [
@@ -297,57 +299,49 @@ class Tracker:
         for rpc_url in RPC_ENDPOINTS:
             try:
                 async with _aiohttp.ClientSession() as session:
-                    # Get latest block
                     bn_resp = await _rpc(session, rpc_url, "eth_blockNumber", [])
+                    if "error" in bn_resp:
+                        log.warning("Polygon RPC %s blockNumber error: %s", rpc_url, bn_resp["error"])
+                        continue
                     latest = int(bn_resp["result"], 16)
+                    log.info("Polygon RPC %s latest block: %d", rpc_url, latest)
 
-                    # Query in 2000-block chunks (most public RPCs cap at 2000)
-                    # ~2 blocks/sec on Polygon → 2000 blocks ≈ 17 min of trades
-                    all_logs: list = []
-                    for chunk_start in range(latest - 6000, latest, 2000):
-                        chunk_end = min(chunk_start + 1999, latest)
-                        logs_resp = await _rpc(session, rpc_url, "eth_getLogs", [{
-                            "address": CTF_CONTRACT,
-                            "fromBlock": hex(chunk_start),
-                            "toBlock": hex(chunk_end),
-                        }])
-                        chunk = logs_resp.get("result", [])
-                        if isinstance(chunk, list):
-                            all_logs.extend(chunk)
-                        elif logs_resp.get("error"):
-                            log.debug("Polygon RPC error: %s", logs_resp["error"])
-                            break
+                    # Query last 3000 blocks in 500-block chunks (~25 min of trades)
+                    for chunk_start in range(latest - 3000, latest, 500):
+                        chunk_end = min(chunk_start + 499, latest)
+                        for contract in CONTRACTS:
+                            logs_resp = await _rpc(session, rpc_url, "eth_getLogs", [{
+                                "address": contract,
+                                "fromBlock": hex(chunk_start),
+                                "toBlock": hex(chunk_end),
+                            }])
+                            if "error" in logs_resp:
+                                log.warning("eth_getLogs error from %s: %s", rpc_url, logs_resp["error"])
+                                continue
+                            chunk = logs_resp.get("result", [])
+                            if not isinstance(chunk, list):
+                                continue
+                            for entry in chunk:
+                                for topic in entry.get("topics", [])[1:]:
+                                    # Ethereum addresses in topics: 0x + 24 zero chars + 40-char addr
+                                    if (isinstance(topic, str) and len(topic) == 66
+                                            and topic.startswith("0x000000000000000000000000")):
+                                        addr = "0x" + topic[26:]
+                                        if addr != "0x" + "0" * 40 and addr not in seen:
+                                            seen.add(addr)
+                                            entries.append({"address": addr.lower()})
 
-                raw_logs = all_logs
-                if not raw_logs:
-                    log.debug("Polygon RPC %s returned 0 logs", rpc_url)
-                    continue
-
-                for entry in raw_logs:
-                    for topic in entry.get("topics", [])[1:]:  # skip topics[0] = event sig
-                        # Ethereum addresses in topics are zero-padded to 32 bytes.
-                        # Pattern: 0x + 24 zero hex chars + 40-char address
-                        if (isinstance(topic, str) and len(topic) == 66
-                                and topic.startswith("0x000000000000000000000000")):
-                            addr = "0x" + topic[26:]
-                            if addr != "0x" + "0" * 40 and addr not in seen:
-                                seen.add(addr)
-                                entries.append({"address": addr.lower()})
-
-                log.info(
-                    "Polygon RPC discovery (%s): %d logs → %d unique addresses",
-                    rpc_url, len(raw_logs), len(entries),
-                )
+                log.info("Polygon RPC discovery (%s): %d unique addresses found", rpc_url, len(entries))
                 if entries:
-                    break  # success — no need to try next RPC
+                    break  # success
 
             except Exception as exc:
-                log.debug("Polygon RPC %s failed: %s", rpc_url, exc)
+                log.warning("Polygon RPC %s failed: %s", rpc_url, exc)
 
         if not entries:
             log.warning(
-                "Polygon RPC discovery returned 0 addresses — "
-                "try: python main.py add-wallet <address> to seed manually"
+                "Polygon RPC discovery found 0 addresses. "
+                "Seed manually: python main.py add-wallet <address from polymarket.com/profile/0x...>"
             )
 
         return entries
