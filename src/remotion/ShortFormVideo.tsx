@@ -231,16 +231,11 @@ export function ShortFormVideo(props: ShortFormVideoProps) {
         background: "#000",
       }}
     >
-      {/* Background music — low volume ambient track under narration */}
-      {audioEnabled && musicUrl && (
-        <Audio
-          src={
-            musicUrl.startsWith("file://") || musicUrl.startsWith("http")
-              ? musicUrl
-              : `file://${musicUrl}`
-          }
-          volume={0.14}
-        />
+      {/* Background music — low volume ambient track under narration.
+          buildInputProps already rewrote local paths to http://localhost
+          /audio-cache URLs so Remotion can fetch them. */}
+      {audioEnabled && musicUrl && musicUrl.startsWith("http") && (
+        <Audio src={musicUrl} volume={0.14} />
       )}
 
       {scenesWithTiming.map((sceneWithTiming, i) => {
@@ -263,16 +258,10 @@ export function ShortFormVideo(props: ShortFormVideoProps) {
             {/* Vignette */}
             <Vignette strength={vignette} />
 
-            {/* Per-scene narration audio — convert absolute paths to file:// URLs */}
-            {audioEnabled && audio?.path && audio.provider !== "silent" && (
-              <Audio
-                src={
-                  audio.path.startsWith("file://") || audio.path.startsWith("http")
-                    ? audio.path
-                    : `file://${audio.path}`
-                }
-                volume={1.0}
-              />
+            {/* Per-scene narration audio. buildInputProps already mapped
+                local paths to http://localhost/audio-cache URLs. */}
+            {audioEnabled && audio?.path && audio.provider !== "silent" && audio.path.startsWith("http") && (
+              <Audio src={audio.path} volume={1.0} />
             )}
           </Sequence>
         );

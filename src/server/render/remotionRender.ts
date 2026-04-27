@@ -140,15 +140,35 @@ export function buildInputProps(job: RenderJob): ShortFormVideoProps {
     durations
   );
 
+  // Remotion's renderer rejects file:// URLs (4.x). Rewrite every cached
+  // audio path to the http://localhost:PORT/audio-cache/<basename> URL
+  // served by Express. Files outside the audio cache (e.g. an absolute
+  // path some other adapter produced) get returned unchanged and may
+  // still fail — but those are out-of-band cases, not the default path.
+  const port = Number(process.env.PORT ?? 3001);
+  const audioBaseUrl = `http://localhost:${port}/audio-cache`;
+  const audioResults = job.audioResults.map((a) => {
+    if (!a.path || a.provider === "silent") return a;
+    if (a.path.startsWith("http")) return a;
+    const basename = path.basename(a.path);
+    return { ...a, path: `${audioBaseUrl}/${basename}` };
+  });
+
+  // Same treatment for music URLs that come back as a local file path.
+  let musicUrl = job.musicUrl ?? null;
+  if (musicUrl && !musicUrl.startsWith("http") && !musicUrl.startsWith("file://")) {
+    musicUrl = `${audioBaseUrl}/${path.basename(musicUrl)}`;
+  }
+
   return {
     scenes: job.scenes,
     scenesWithTiming,
     resolvedAssets: job.resolvedAssets,
-    audioResults: job.audioResults,
+    audioResults,
     captionEntries,
     styleProfile: job.styleProfile,
     audioEnabled: job.audioEnabled,
-    musicUrl: job.musicUrl ?? null,
+    musicUrl,
     totalFrames,
   };
 }

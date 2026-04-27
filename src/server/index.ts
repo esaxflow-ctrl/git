@@ -19,11 +19,20 @@ import { planCache, assetCache, audioCache } from "../lib/cache";
 
 const PORT = Number(process.env.PORT ?? 3001);
 const OUTPUT_DIR = process.env.OUTPUT_DIR ?? "/tmp/sfv-output";
+const CACHE_DIR = process.env.CACHE_DIR ?? "/tmp/sfv-cache";
+const AUDIO_CACHE_DIR = path.join(CACHE_DIR, "audio");
 
 const app = express();
 
 app.use(cors({ origin: ["http://localhost:3000", "http://localhost:5173"] }));
 app.use(express.json({ limit: "5mb" }));
+
+// Serve the audio cache over HTTP. Remotion 4.x renderer dropped support
+// for file:// asset URLs — every audio/video src must be http(s). We serve
+// cached WAV files at /audio-cache/<hash>.wav so buildInputProps can hand
+// Chromium an HTTP URL it'll accept.
+fs.mkdirSync(AUDIO_CACHE_DIR, { recursive: true });
+app.use("/audio-cache", express.static(AUDIO_CACHE_DIR));
 
 // API routes
 app.use("/api/styles", stylesRouter);
