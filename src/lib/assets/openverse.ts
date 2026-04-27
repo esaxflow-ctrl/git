@@ -91,29 +91,74 @@ function qualityScore(img: OpenverseImage): number {
   return s;
 }
 
+// Broad-but-evocative fallback queries by mood. Used only after specific
+// queries return nothing, so we still get *some* photo instead of a black
+// gradient. Each is 1–2 words that Openverse reliably returns results for.
+const MOOD_FALLBACK_QUERIES: Record<string, string[]> = {
+  hollow: ["empty room", "dim window"],
+  dread: ["dark hallway", "rain window"],
+  restless: ["late night", "city window"],
+  relief: ["morning light", "open window"],
+  triumphant: ["sunrise", "open road"],
+  mysterious: ["fog forest", "alley night"],
+  analytical: ["desk light", "open book"],
+  historical: ["old photo", "vintage room"],
+  defiant: ["mirror morning", "city walk"],
+  neutral: ["quiet room", "morning light"],
+};
+
+const UNIVERSAL_FALLBACK_QUERIES = ["window light", "quiet room", "morning", "city street", "hands desk"];
+
+function buildOpenverseQueries(scene: ScenePlan): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (q: string) => {
+    const t = q.trim();
+    if (t.length >= 2 && !seen.has(t)) {
+      seen.add(t);
+      out.push(t);
+    }
+  };
+
+  // 1. Original search terms with shot descriptors stripped.
+  for (const term of scene.searchTerms) {
+    add(extractKeywords(term));
+  }
+  // 2. First 2 content words from each term (more likely to match).
+  for (const term of scene.searchTerms) {
+    const words = extractKeywords(term).split(" ").filter(Boolean);
+    if (words.length >= 2) add(words.slice(0, 2).join(" "));
+    if (words.length >= 1) add(words[0]);
+  }
+  // 3. Mood-driven fallback (broad but evocative).
+  const moodQueries = MOOD_FALLBACK_QUERIES[scene.mood ?? "neutral"] ?? MOOD_FALLBACK_QUERIES.neutral;
+  for (const q of moodQueries) add(q);
+  // 4. Universal last-resort. Always returns something on Openverse.
+  for (const q of UNIVERSAL_FALLBACK_QUERIES) add(q);
+
+  return out;
+}
+
 export async function fetchFromOpenverse(scene: ScenePlan): Promise<VisualAsset> {
   const hash = sceneHash(scene);
+  const queries = buildOpenverseQueries(scene);
 
-  // Try each search term, then progressively simpler fallbacks
-  const queries = [
-    ...scene.searchTerms.map(extractKeywords).filter((q) => q.length > 0),
-    // Simplified fallback: just the first 2 keywords without shot descriptors
-    scene.searchTerms[0]
-      ? extractKeywords(scene.searchTerms[0]).split(" ").slice(0, 2).join(" ")
-      : "",
-    scene.mood ?? "contemplative",
-  ].filter((q) => q.length >= 2);
-
+  const errors: string[] = [];
   for (const query of queries) {
     try {
       const results = await openverseSearch(query);
-      if (results.length === 0) continue;
+      if (results.length === 0) {
+        errors.push(`"${query}" → 0 results`);
+        continue;
+      }
 
       // Rank by portrait quality, pick deterministically from top-half
       const ranked = [...results].sort((a, b) => qualityScore(b) - qualityScore(a));
       const topHalf = ranked.slice(0, Math.max(1, Math.ceil(ranked.length / 2)));
       const idx = deterministicIndex(hash + query, topHalf.length);
       const img = topHalf[idx];
+
+      console.info(`[assets:openverse] "${query}" → ${results.length} results, picked ${img.url.slice(0, 80)}`);
 
       return {
         type: "stockImage",
@@ -129,10 +174,14 @@ export async function fetchFromOpenverse(scene: ScenePlan): Promise<VisualAsset>
           sceneHash: hash,
         },
       };
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(`"${query}" → ${msg.slice(0, 100)}`);
       continue;
     }
   }
 
-  throw new Error("No Openverse results for any query variant");
+  throw new Error(
+    `No Openverse results across ${queries.length} queries. Last few: ${errors.slice(-3).join(" | ")}`
+  );
 }

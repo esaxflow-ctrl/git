@@ -1,4 +1,5 @@
 import fs from "fs";
+import { VisualAsset, ScenePlan } from "../../lib/validation/schemas";
 
 /**
  * Final-export validation.
@@ -7,6 +8,74 @@ import fs from "fs";
  * 1080×1920 resolution, an audio track, and a sane file size. The result is
  * returned (never thrown) so the render route can attach it to the job.
  */
+
+// ─── Visual-coverage check ───────────────────────────────────────────────────
+// Flags videos that are mostly text cards / SVG fallbacks (the "AI slop"
+// failure mode). Returns a warning when >30% of scenes have no real photo
+// or video asset attached. Doesn't fail the render — surfaces it in the
+// debug report so the user can react.
+
+export interface VisualCoverageReport {
+  totalScenes: number;
+  realPhotoScenes: number;
+  cardOrFallbackScenes: number;
+  generatedFallbackPercent: number;
+  textCardScenes: number;
+  textCardPercent: number;
+  textHeavy: boolean;
+  warnings: string[];
+}
+
+const CARD_MODES = new Set(["quoteCard", "evidenceCard", "textCard", "timelineCard", "gradientMotionCard", "mapCard"]);
+
+export function analyzeVisualCoverage(
+  scenes: ScenePlan[],
+  assets: VisualAsset[]
+): VisualCoverageReport {
+  const warnings: string[] = [];
+  const totalScenes = scenes.length;
+
+  let realPhotoScenes = 0;
+  let cardOrFallbackScenes = 0;
+  let textCardScenes = 0;
+
+  for (let i = 0; i < scenes.length; i++) {
+    const scene = scenes[i];
+    const asset = assets[i];
+    const isCardMode = CARD_MODES.has(scene.visualMode);
+    const isGeneratedFallback = asset?.provider === "generated";
+
+    if (isCardMode) textCardScenes++;
+    if (isGeneratedFallback || isCardMode) cardOrFallbackScenes++;
+    else realPhotoScenes++;
+  }
+
+  const generatedFallbackPercent = (cardOrFallbackScenes / Math.max(1, totalScenes)) * 100;
+  const textCardPercent = (textCardScenes / Math.max(1, totalScenes)) * 100;
+  const textHeavy = generatedFallbackPercent > 30;
+
+  if (textHeavy) {
+    warnings.push(
+      `${cardOrFallbackScenes}/${totalScenes} scene(s) (${generatedFallbackPercent.toFixed(0)}%) have no real photo — using SVG fallbacks. Add a Pexels API key (free) for real visuals.`
+    );
+  }
+  if (textCardPercent > 20) {
+    warnings.push(
+      `${textCardScenes}/${totalScenes} scene(s) are typography-only cards (${textCardPercent.toFixed(0)}%). Aim for ≤20%.`
+    );
+  }
+
+  return {
+    totalScenes,
+    realPhotoScenes,
+    cardOrFallbackScenes,
+    generatedFallbackPercent,
+    textCardScenes,
+    textCardPercent,
+    textHeavy,
+    warnings,
+  };
+}
 
 export interface ExportValidation {
   pass: boolean;

@@ -32,17 +32,27 @@ With no API keys set, the system uses:
 
 ### Demo / dry-run mode
 
-Forces every paid path off — deterministic planner, no Pexels/Pixabay/Openverse calls, silent TTS. Use this for end-to-end pipeline tests without spending API credits.
+Forces the deterministic planner and silent TTS. **Openverse stays enabled** because it's free and CC-licensed — without it, every scene would be a textless gradient. Pexels and Pixabay are skipped.
 
 ```bash
 npm run dev:demo
 ```
 
-That works on macOS, Linux, and Windows (via `cross-env`). If you'd rather set the env var by hand:
+Works on macOS, Linux, and Windows (via `cross-env`). If you'd rather set the env var by hand:
 
 - macOS / Linux: `DEMO_MODE=1 npm run dev`
 - Windows cmd: `set DEMO_MODE=1 && npm run dev`
 - Windows PowerShell: `$env:DEMO_MODE="1"; npm run dev`
+
+### Real visuals (free, ~2 minutes)
+
+Openverse alone returns CC-licensed images that vary in quality. For a sharp jump in visual quality, get a free Pexels API key:
+
+1. Sign up at https://www.pexels.com/api/
+2. Copy the key into `.env`: `PEXELS_API_KEY=your_key`
+3. Run `npm run dev` (not `dev:demo`).
+
+Pexels gives you real stock video and high-quality portrait photos that match your scene search terms. This is the difference between "atmospheric backdrop with captions" and "TikTok-grade footage with captions."
 
 ---
 

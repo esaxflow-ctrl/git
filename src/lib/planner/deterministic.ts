@@ -31,17 +31,23 @@ const STOPWORDS = new Set([
 
 // ─── Visual Mode & Role Sequences ─────────────────────────────────────────────
 
-// Photo-first rotation: real photos for the majority, SVG cards as
-// rhythmic punctuation. Each photo is unique (Openverse search per scene)
-// so this still avoids the "everything looks the same" failure mode.
+// Photo-only rotation. Cards (textCard / quoteCard / evidenceCard) used to
+// punctuate every other scene, but they render as full-screen typography
+// which makes the output feel like a quote slideshow instead of a real
+// short-form video. Captions at the bottom of the frame already carry the
+// words; the picture should carry the meaning.
+//
+// If a scene's photo can't be fetched, the SVG fallback in
+// `lib/assets/motionGraphics.ts` returns a textless atmospheric gradient
+// rather than another text card.
 const VISUAL_MODES: VisualMode[] = [
   "stockImage",
-  "quoteCard",
   "stockImage",
   "stockImage",
-  "evidenceCard",
   "stockImage",
-  "textCard",
+  "stockImage",
+  "stockImage",
+  "stockImage",
   "stockImage",
 ];
 
@@ -282,32 +288,12 @@ function buildCaption(narration: string): string {
   return caption;
 }
 
-const PHOTO_MODES = new Set<VisualMode>(["stockImage", "stockVideo"]);
-const CARD_MODES: VisualMode[] = ["quoteCard", "evidenceCard", "textCard", "timelineCard", "gradientMotionCard"];
-
-function assignVisualMode(index: number, usedModes: VisualMode[]): VisualMode {
-  const last = usedModes[usedModes.length - 1];
-  const secondLast = usedModes[usedModes.length - 2];
-  const thirdLast = usedModes[usedModes.length - 3];
-
-  // Hard rule: no more than 2 consecutive photo scenes
-  const twoConsecutivePhotos =
-    last && secondLast && PHOTO_MODES.has(last) && PHOTO_MODES.has(secondLast);
-
-  // Soft rule: if 2 of last 3 were photos, prefer a card next
-  const twoOfThreePhotos =
-    [last, secondLast, thirdLast].filter(Boolean).filter((m) => PHOTO_MODES.has(m!)).length >= 2;
-
-  const forceCard = twoConsecutivePhotos || twoOfThreePhotos;
-
-  if (forceCard) {
-    const pool = CARD_MODES.filter((m) => m !== last && m !== secondLast);
-    return pool.length > 0 ? pool[index % pool.length] : CARD_MODES[index % CARD_MODES.length];
-  }
-
-  const candidates = VISUAL_MODES.filter((m) => m !== last && m !== secondLast);
-  const pool = candidates.length > 0 ? candidates : VISUAL_MODES.filter((m) => m !== last);
-  return pool[index % pool.length];
+// Visual mode is always stockImage. Each scene gets a unique photo (or a
+// textless atmospheric gradient if no photo source is available), and the
+// caption layer at the bottom carries the words. No card scenes — those
+// were producing the "quote slideshow" feel.
+function assignVisualMode(_index: number, _usedModes: VisualMode[]): VisualMode {
+  return "stockImage";
 }
 
 function inferMood(text: string): string {

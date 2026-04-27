@@ -32,19 +32,20 @@ export async function resolveVisual(
   let asset: VisualAsset | null = null;
   const demo = process.env.DEMO_MODE === "1";
 
-  if (!needsGenerated && !demo) {
-    // 1. Pexels — video OR image, requires API key
-    if (process.env.PEXELS_API_KEY) {
+  if (!needsGenerated) {
+    // 1. Pexels — paid (free key, but counts as a "paid provider"). Skip in demo.
+    if (!demo && process.env.PEXELS_API_KEY) {
       asset = await tryProvider("pexels", () => fetchFromPexels(scene));
     }
 
-    // 2. Pixabay — images only, requires API key (key is optional but usually needed)
-    if (!asset && !needsVideo && process.env.PIXABAY_API_KEY) {
+    // 2. Pixabay — same treatment as Pexels.
+    if (!asset && !needsVideo && !demo && process.env.PIXABAY_API_KEY) {
       asset = await tryProvider("pixabay", () => fetchFromPixabay(scene));
     }
 
-    // 3. Openverse — free, no API key required, CC-licensed images
-    // Used for stockImage, and for stockVideo fallback (still image instead of SVG card)
+    // 3. Openverse — free, no API key required, CC-licensed images.
+    // Allowed in demo mode because it costs nothing. This is what stops
+    // demo videos from being a 100% text slideshow.
     if (!asset) {
       asset = await tryProvider("openverse", () => fetchFromOpenverse(scene));
     }

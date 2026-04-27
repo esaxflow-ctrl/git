@@ -236,5 +236,15 @@ const DebugReportSchema = z.object({
     })
     .nullable(),
   validationPass: z.boolean().nullable(),
+  visualCoverage: z.object({
+    totalScenes: z.number(),
+    realPhotoScenes: z.number(),
+    cardOrFallbackScenes: z.number(),
+    generatedFallbackPercent: z.number(),
+    textCardScenes: z.number(),
+    textCardPercent: z.number(),
+    textHeavy: z.boolean(),
+    warnings: z.array(z.string()),
+  }),
 });
 export type DebugReport = z.infer<typeof DebugReportSchema>;

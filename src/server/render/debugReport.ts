@@ -1,6 +1,6 @@
 import fs from "fs";
 import { RenderJob } from "../../lib/validation/schemas";
-import { ExportValidation } from "./exportValidator";
+import { ExportValidation, VisualCoverageReport, analyzeVisualCoverage } from "./exportValidator";
 
 /**
  * Per-job debug report. Written to OUTPUT_DIR/{jobId}.report.json so any
@@ -25,6 +25,7 @@ export interface DebugReport {
   audioEnabled: boolean;
   validation: ExportValidation | null;
   validationPass: boolean | null;
+  visualCoverage: VisualCoverageReport;
 }
 
 export function buildDebugReport(
@@ -62,6 +63,9 @@ export function buildDebugReport(
     fallbacksUsed.push("Export validation reported issues — see validation.failures");
   }
 
+  const visualCoverage = analyzeVisualCoverage(job.scenes, job.resolvedAssets);
+  for (const w of visualCoverage.warnings) fallbacksUsed.push(w);
+
   return {
     jobId: job.jobId,
     createdAt: job.createdAt,
@@ -81,6 +85,7 @@ export function buildDebugReport(
     audioEnabled: job.audioEnabled,
     validation,
     validationPass: validation?.pass ?? null,
+    visualCoverage,
   };
 }
 

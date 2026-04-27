@@ -56,48 +56,68 @@ function sharedDefs(accent: string): string {
   </defs>`;
 }
 
-// ─── Cinematic gradient motion card — emotional opener / atmosphere ────────────
+// ─── Atmospheric gradient — TEXTLESS fallback when a photo can't be fetched ─
+//
+// Used when scene.visualMode is stockImage / stockVideo and every photo
+// provider failed. Renders only colour atmosphere; the captions at the
+// bottom of the frame carry the words. The seed varies the gradient angle
+// + accent placement per scene so successive scenes don't look identical.
 
-function gradientMotionCard(scene: ScenePlan, palette: string[]): string {
+function atmosphericGradient(scene: ScenePlan, palette: string[]): string {
   const [bg1, bg2, accent] = palette;
-  const lines = wrapText(escapeSvg(scene.caption), 18);
-  const lineH = 96;
-  const blockH = lines.length * lineH;
-  const blockY = 1920 * 0.58; // lower-third position
-
-  const textSvg = lines
-    .map(
-      (line, i) =>
-        `<text x="80" y="${blockY + i * lineH}" font-size="82" font-weight="800"
-         fill="white" font-family="Georgia, serif" letter-spacing="-1"
-         filter="url(#grain)" opacity="0.97">${line}</text>`
-    )
-    .join("\n  ");
-
-  const moodLabel = escapeSvg((scene.mood ?? "").toUpperCase());
+  const seed = stringHash(scene.id);
+  const angle = 110 + (seed % 80); // 110–190
+  const accentX = 20 + (seed % 60); // 20–80%
+  const accentY = 30 + ((seed >> 4) % 50); // 30–80%
+  const accentR = 480 + (seed % 280); // 480–760
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">
   ${sharedDefs(accent ?? "#ffffff")}
   <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%" gradientTransform="rotate(${angle - 135})">
+      <stop offset="0%" stop-color="${bg1 ?? "#0a0a0a"}"/>
+      <stop offset="60%" stop-color="${bg2 ?? "#1a1a2e"}"/>
+      <stop offset="100%" stop-color="${bg1 ?? "#000"}"/>
+    </linearGradient>
+    <radialGradient id="accentGlow" cx="${accentX}%" cy="${accentY}%" r="50%">
+      <stop offset="0%" stop-color="${accent ?? "#ffffff"}" stop-opacity="0.22"/>
+      <stop offset="100%" stop-color="${accent ?? "#ffffff"}" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="1080" height="1920" fill="url(#bgGrad)"/>
+  <circle cx="${accentX * 10.8}" cy="${accentY * 19.2}" r="${accentR}" fill="url(#accentGlow)"/>
+  <rect width="1080" height="1920" fill="url(#vig)"/>
+</svg>`;
+}
+
+function stringHash(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+// ─── Cinematic gradient motion card — emotional opener / atmosphere ────────────
+
+function gradientMotionCard(_scene: ScenePlan, palette: string[]): string {
+  // No text leak — the on-screen caption layer carries the words. This card
+  // is purely atmospheric: gradient backdrop + accent stripes.
+  const [bg1, bg2, accent] = palette;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">
+  ${sharedDefs(accent ?? "#ffffff")}
+  <defs>
     <linearGradient id="bgGrad" x1="0%" y1="0%" x2="60%" y2="100%">
-      <stop offset="0%" stop-color="${bg1}"/>
-      <stop offset="55%" stop-color="${bg2 ?? bg1}"/>
-      <stop offset="100%" stop-color="${accent ?? bg1}" stop-opacity="0.4"/>
+      <stop offset="0%" stop-color="${bg1 ?? "#0a0a0a"}"/>
+      <stop offset="55%" stop-color="${bg2 ?? bg1 ?? "#1a1a2e"}"/>
+      <stop offset="100%" stop-color="${accent ?? bg1 ?? "#000"}" stop-opacity="0.35"/>
     </linearGradient>
   </defs>
   <rect width="1080" height="1920" fill="url(#bgGrad)"/>
   <rect width="1080" height="1920" fill="url(#vig)"/>
-  <!-- Thin horizontal accent bars -->
   <rect x="0" y="60" width="1080" height="2" fill="${accent ?? '#ffffff'}" opacity="0.18"/>
   <rect x="0" y="1860" width="1080" height="2" fill="${accent ?? '#ffffff'}" opacity="0.18"/>
-  <!-- Left vertical accent stripe -->
-  <rect x="52" y="${blockY - 24}" width="4" height="${blockH + 16}" fill="${accent ?? '#ffffff'}" opacity="0.9"/>
-  <!-- Mood label — small caps, faint -->
-  <text x="80" y="${blockY - 50}" font-size="28" fill="${accent ?? '#ffffff'}" opacity="0.55"
-        font-family="Helvetica Neue, sans-serif" letter-spacing="10" font-weight="300">${moodLabel}</text>
-  <!-- Main text -->
-  ${textSvg}
-  <!-- Grain overlay for film texture -->
   <rect width="1080" height="1920" fill="url(#vig)" opacity="0.15"/>
 </svg>`;
 }
@@ -142,160 +162,71 @@ function textCard(scene: ScenePlan, palette: string[]): string {
 </svg>`;
 }
 
-// ─── Quote card — editorial pull-quote / inner monologue ─────────────────────
+// ─── Quote card — minimal frame, no leaked attribution text ─────────────────
+// Caption text comes from the global CaptionLayer; this card provides only
+// the visual frame (backdrop + decorative quote marks).
 
-function quoteCard(scene: ScenePlan, palette: string[]): string {
+function quoteCard(_scene: ScenePlan, palette: string[]): string {
   const [bg, , accent] = palette;
-  const lines = wrapText(escapeSvg(scene.caption), 22);
-  const lineH = 84;
-  const blockH = lines.length * lineH;
-  const startY = (1920 - blockH) / 2 - 60;
   const emphasisColor = accent ?? "#ffffff";
-
-  const textSvg = lines
-    .map(
-      (line, i) =>
-        `<text x="100" y="${startY + i * lineH + 70}" font-size="72" fill="white"
-         font-family="Georgia, 'Times New Roman', serif" font-style="italic"
-         font-weight="400" letter-spacing="0.5">${line}</text>`
-    )
-    .join("\n  ");
-
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">
   ${sharedDefs(emphasisColor)}
-  <rect width="1080" height="1920" fill="${bg}"/>
-  <!-- Vignette for depth -->
+  <rect width="1080" height="1920" fill="${bg ?? "#0a0a0a"}"/>
   <rect width="1080" height="1920" fill="url(#vig)"/>
-  <!-- Large decorative opening quote -->
-  <text x="72" y="${startY - 20}" font-size="280" fill="${emphasisColor}" opacity="0.12"
+  <text x="120" y="640" font-size="320" fill="${emphasisColor}" opacity="0.10"
         font-family="Georgia, serif" font-weight="900">"</text>
-  <!-- Top rule -->
-  <rect x="80" y="${startY - 30}" width="920" height="2" fill="${emphasisColor}" opacity="0.5"/>
-  <!-- Quote text -->
-  ${textSvg}
-  <!-- Bottom rule -->
-  <rect x="80" y="${startY + blockH + 50}" width="920" height="2" fill="${emphasisColor}" opacity="0.5"/>
-  <!-- Closing quote -->
-  <text x="960" y="${startY + blockH + 220}" font-size="280" fill="${emphasisColor}" opacity="0.12"
+  <text x="960" y="1380" font-size="320" fill="${emphasisColor}" opacity="0.10"
         font-family="Georgia, serif" font-weight="900" text-anchor="end">"</text>
-  <!-- Attribution dash -->
-  <text x="80" y="${startY + blockH + 110}" font-size="32" fill="${emphasisColor}" opacity="0.5"
-        font-family="Helvetica Neue, sans-serif" letter-spacing="5" font-weight="300">— YOU, PROBABLY</text>
 </svg>`;
 }
 
-// ─── Evidence card — documentary / newspaper style ────────────────────────────
+// ─── Evidence card — minimal frame, no leaked template metadata ─────────────
+// Removed: "FINDING", scene-goal heading, giant ghost keyword, body-text
+// duplicate of the caption, and the "SOURCE: OBSERVED BEHAVIOR PATTERN"
+// placeholder. Caption layer carries all words.
 
-function evidenceCard(scene: ScenePlan, palette: string[]): string {
+function evidenceCard(_scene: ScenePlan, palette: string[]): string {
   const [bg, secondary, accent] = palette;
   const emphasisColor = accent ?? "#e8e8e8";
-  const lines = wrapText(escapeSvg(scene.caption), 24);
-  const lineH = 68;
-  const bodyY = 820;
-
-  const textSvg = lines
-    .map(
-      (line, i) =>
-        `<text x="100" y="${bodyY + i * lineH}" font-size="60" fill="white"
-         font-family="Helvetica Neue, sans-serif" font-weight="300">${line}</text>`
-    )
-    .join("\n  ");
-
-  // Key word or phrase for large callout
-  const keyWord = (scene.emphasisWords?.[0] ?? scene.mood ?? "FACT").toUpperCase();
-  const sceneLabel = escapeSvg((scene.sceneGoal ?? "EVIDENCE").split(" ").slice(0, 3).join(" ").toUpperCase());
-
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">
   ${sharedDefs(emphasisColor)}
-  <rect width="1080" height="1920" fill="${bg}"/>
-  <!-- Header band -->
+  <rect width="1080" height="1920" fill="${bg ?? "#0a0a0a"}"/>
   <rect x="0" y="0" width="1080" height="220" fill="${secondary ?? '#0d0d0d'}" opacity="0.95"/>
   <rect x="0" y="220" width="1080" height="3" fill="${emphasisColor}" opacity="0.9"/>
-  <!-- Document category label -->
-  <text x="100" y="100" font-size="32" fill="${emphasisColor}" opacity="0.75"
-        font-family="Helvetica Neue, sans-serif" font-weight="700" letter-spacing="8">FINDING</text>
-  <!-- Scene goal as subheading -->
-  <text x="100" y="170" font-size="46" fill="white"
-        font-family="Helvetica Neue, sans-serif" font-weight="600" letter-spacing="1">${sceneLabel}</text>
-  <!-- Accent bracket — left edge highlight -->
-  <rect x="60" y="300" width="6" height="${lines.length * lineH + 300}" fill="${emphasisColor}" opacity="0.85"/>
-  <!-- Large keyword callout -->
-  <text x="100" y="650" font-size="160" fill="${emphasisColor}" opacity="0.12"
-        font-family="Impact, Arial Black, sans-serif" letter-spacing="-4">${escapeSvg(keyWord)}</text>
-  <!-- Divider -->
-  <rect x="100" y="770" width="880" height="2" fill="${emphasisColor}" opacity="0.35"/>
-  <!-- Body text -->
-  ${textSvg}
-  <!-- Vignette -->
+  <rect x="60" y="300" width="6" height="1300" fill="${emphasisColor}" opacity="0.85"/>
+  <rect x="0" y="1700" width="1080" height="3" fill="${emphasisColor}" opacity="0.9"/>
   <rect width="1080" height="1920" fill="url(#vig)"/>
-  <!-- Source indicator bottom -->
-  <text x="100" y="1840" font-size="26" fill="white" opacity="0.3"
-        font-family="Helvetica Neue, sans-serif" letter-spacing="3" font-weight="300">SOURCE: OBSERVED BEHAVIOR PATTERN</text>
 </svg>`;
 }
 
-// ─── Map card — scale / systemic view ────────────────────────────────────────
+// ─── Map card — minimal radar frame, no text ─────────────────────────────────
+// Removed coordinate labels and caption duplicate.
 
-function mapCard(scene: ScenePlan, palette: string[]): string {
+function mapCard(_scene: ScenePlan, palette: string[]): string {
   const [bg, , accent] = palette;
   const emphasisColor = accent ?? "#ffffff";
-  const lines = wrapText(escapeSvg(scene.caption), 22);
-  const lineH = 72;
-  const textY = 1380;
-
-  const textSvg = lines
-    .map(
-      (line, i) =>
-        `<text x="540" y="${textY + i * lineH}" text-anchor="middle" font-size="64"
-         fill="white" font-family="Helvetica Neue, sans-serif" font-weight="500">${line}</text>`
-    )
-    .join("\n  ");
-
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">
   ${sharedDefs(emphasisColor)}
-  <rect width="1080" height="1920" fill="${bg}"/>
-  <!-- Crosshair grid -->
+  <rect width="1080" height="1920" fill="${bg ?? "#0a0a0a"}"/>
   <line x1="540" y1="200" x2="540" y2="1300" stroke="${emphasisColor}" stroke-width="1" opacity="0.08"/>
   <line x1="100" y1="750" x2="980" y2="750" stroke="${emphasisColor}" stroke-width="1" opacity="0.08"/>
-  <!-- Outer rings -->
   <circle cx="540" cy="750" r="420" fill="none" stroke="${emphasisColor}" stroke-width="1" opacity="0.10"/>
   <circle cx="540" cy="750" r="300" fill="none" stroke="${emphasisColor}" stroke-width="1" opacity="0.14"/>
   <circle cx="540" cy="750" r="180" fill="none" stroke="${emphasisColor}" stroke-width="2" opacity="0.20"/>
   <circle cx="540" cy="750" r="80" fill="none" stroke="${emphasisColor}" stroke-width="2" opacity="0.35"/>
-  <!-- Center target -->
   <circle cx="540" cy="750" r="22" fill="${emphasisColor}" opacity="0.8"/>
-  <circle cx="540" cy="750" r="10" fill="${bg}"/>
-  <!-- Coordinate labels -->
-  <text x="555" y="345" font-size="24" fill="${emphasisColor}" opacity="0.35"
-        font-family="Helvetica, monospace" letter-spacing="2">0.00° N</text>
-  <text x="940" y="758" font-size="24" fill="${emphasisColor}" opacity="0.35"
-        font-family="Helvetica, monospace" letter-spacing="2">0.00° E</text>
-  <!-- Divider line above text -->
-  <rect x="120" y="${textY - 40}" width="840" height="2" fill="${emphasisColor}" opacity="0.3"/>
-  ${textSvg}
+  <circle cx="540" cy="750" r="10" fill="${bg ?? "#0a0a0a"}"/>
   <rect width="1080" height="1920" fill="url(#vig)"/>
 </svg>`;
 }
 
-// ─── Timeline card — documentary progression ──────────────────────────────────
+// ─── Timeline card — minimal nodes graphic, no text ──────────────────────────
+// Removed "TIMELINE" header, scene-goal label, and caption duplicate.
 
-function timelineCard(scene: ScenePlan, palette: string[]): string {
+function timelineCard(_scene: ScenePlan, palette: string[]): string {
   const [bg, secondary, accent] = palette;
   const emphasisColor = accent ?? "#ffffff";
-  const lines = wrapText(escapeSvg(scene.caption), 22);
-  const lineH = 70;
-  const textY = 1300;
-
-  const textSvg = lines
-    .map(
-      (line, i) =>
-        `<text x="540" y="${textY + i * lineH}" text-anchor="middle" font-size="62"
-         fill="white" font-family="Helvetica Neue, sans-serif" font-weight="400">${line}</text>`
-    )
-    .join("\n  ");
-
-  // Horizontal timeline with 5 steps, node 3 is active
-  const timelineY = 860;
+  const timelineY = 960;
   const nodeXs = [160, 310, 460, 620, 770, 920];
   const activeIdx = 2;
 
@@ -309,29 +240,14 @@ function timelineCard(scene: ScenePlan, palette: string[]): string {
             fill="${i === activeIdx ? emphasisColor : 'none'}"
             stroke="${i <= activeIdx ? emphasisColor : (secondary ?? '#555')}"
             stroke-width="3" opacity="${i === activeIdx ? 1 : i < activeIdx ? 0.8 : 0.3}"/>
-    ${i === activeIdx ? `<circle cx="${x}" cy="${timelineY}" r="34" fill="none" stroke="${emphasisColor}" stroke-width="2" opacity="0.4"/>` : ""}
-    <text x="${x}" y="${timelineY + 50}" text-anchor="middle" font-size="22"
-          fill="${emphasisColor}" opacity="${i <= activeIdx ? 0.6 : 0.2}"
-          font-family="Helvetica, monospace" letter-spacing="2">${String(i + 1).padStart(2, "0")}</text>`
+    ${i === activeIdx ? `<circle cx="${x}" cy="${timelineY}" r="34" fill="none" stroke="${emphasisColor}" stroke-width="2" opacity="0.4"/>` : ""}`
     )
     .join("");
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="1920">
   ${sharedDefs(emphasisColor)}
-  <rect width="1080" height="1920" fill="${bg}"/>
-  <!-- Timeline header -->
-  <text x="100" y="480" font-size="28" fill="${emphasisColor}" opacity="0.5"
-        font-family="Helvetica Neue, sans-serif" letter-spacing="8" font-weight="300">TIMELINE</text>
-  <rect x="100" y="510" width="880" height="2" fill="${emphasisColor}" opacity="0.25"/>
-  <!-- Scene goal as context label -->
-  <text x="100" y="720" font-size="54" fill="white" opacity="0.85"
-        font-family="Helvetica Neue, sans-serif" font-weight="600">${escapeSvg((scene.sceneGoal ?? "").split(" ").slice(0, 4).join(" "))}</text>
-  <!-- Timeline nodes -->
+  <rect width="1080" height="1920" fill="${bg ?? "#0a0a0a"}"/>
   ${nodes}
-  <!-- Divider -->
-  <rect x="100" y="${textY - 50}" width="880" height="2" fill="${emphasisColor}" opacity="0.25"/>
-  <!-- Caption text -->
-  ${textSvg}
   <rect width="1080" height="1920" fill="url(#vig)"/>
 </svg>`;
 }
@@ -346,6 +262,12 @@ export function generateMotionGraphic(
   let svg: string;
 
   switch (scene.visualMode) {
+    // stockImage / stockVideo fell through every photo provider — render
+    // a textless atmospheric gradient and let captions tell the story.
+    case "stockImage":
+    case "stockVideo":
+      svg = atmosphericGradient(scene, palette);
+      break;
     case "quoteCard":
       svg = quoteCard(scene, palette);
       break;

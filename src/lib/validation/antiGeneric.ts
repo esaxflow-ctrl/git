@@ -110,16 +110,17 @@ export function validateScenePlan(scenes: ScenePlan[]): ValidationResult {
     return { valid: false, reason: "Scene plan is empty.", warnings };
   }
 
-  // Check visual mode diversity. stockImage and stockVideo allow higher
-  // concentration since each scene gets a unique photo (no repetition risk).
-  // SVG card modes stay capped because identical templates DO repeat.
+  // Visual mode diversity: stockImage / stockVideo can be 100% (every photo
+  // is unique, variety comes from the search terms). SVG card modes are
+  // capped at 60% because identical templates DO repeat visually.
   const modeCounts: Record<string, number> = {};
   for (const scene of scenes) {
     modeCounts[scene.visualMode] = (modeCounts[scene.visualMode] ?? 0) + 1;
   }
   for (const [mode, count] of Object.entries(modeCounts)) {
     const isUniquePhotoMode = mode === "stockImage" || mode === "stockVideo";
-    const cap = isUniquePhotoMode ? 0.85 : 0.6;
+    if (isUniquePhotoMode) continue;
+    const cap = 0.6;
     if (count / scenes.length > cap) {
       return {
         valid: false,
