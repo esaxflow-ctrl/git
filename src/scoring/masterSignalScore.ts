@@ -130,16 +130,19 @@ export function computeMasterSignal(input: MasterScoreInputs): MasterSignal {
     active.length >= 4
   ) {
     // Live still requires 2+ independent supports AND >= 4 active components.
-    // The active.length gate keeps live trading honest even with the
-    // normalised score: a single very-strong sub-score can't trigger live.
+    // A single very-strong sub-score can't trigger live trading.
     recommendation = 'LIVE_BUY_ALLOWED';
     reason = `master ${masterScore} >= LIVE_BUY_THRESHOLD ${cfg.LIVE_BUY_THRESHOLD}, ${passingSupports.length} confirmations, ${active.length} active components`;
-  } else if (masterScore >= cfg.LIVE_BUY_THRESHOLD - 10 && passingSupports.length >= 1) {
-    // Paper-buy is more permissive: 1 supporting signal is enough provided
-    // the master score still clears LIVE_BUY_THRESHOLD - 10.
+  } else if (masterScore >= cfg.LIVE_BUY_THRESHOLD - 10 && active.length >= 3) {
+    // Paper-buy: the master score is the gate; confirmations are a bonus.
+    // The point of paper mode is to validate the pipeline end-to-end, so
+    // healthy tokens that pass safety / volume / liquidity / Jupiter
+    // checks should actually be paper-bought even if no single sub-score
+    // (which mostly require buzz / event / smart-wallet data the user
+    // hasn't wired up yet) clears its individual threshold.
     recommendation = 'PAPER_BUY';
-    reason = `master ${masterScore} good enough for paper; confirmations=${passingSupports.length}, active=${active.length}`;
-  } else if (masterScore >= 60 || passingSupports.length >= 1) {
+    reason = `master ${masterScore} ≥ ${cfg.LIVE_BUY_THRESHOLD - 10} (paper), confirmations=${passingSupports.length}, active=${active.length}`;
+  } else if (masterScore >= 50 || passingSupports.length >= 1) {
     recommendation = 'WATCH';
     reason = `master ${masterScore}, ${passingSupports.length} confirmations, ${active.length} active`;
   } else {
