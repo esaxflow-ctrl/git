@@ -23,7 +23,11 @@ export async function resolveVisual(
 ): Promise<VisualAsset> {
   const cacheKey = assetCacheKey(scene.searchTerms, scene.visualMode);
   const cached = await assetCache.get(cacheKey);
-  if (cached) return cached as VisualAsset;
+  if (cached) {
+    const c = cached as VisualAsset;
+    console.info(`[assets] CACHE HIT for [${scene.searchTerms.join(", ")}] → ${c.provider}`);
+    return c;
+  }
 
   const needsVideo = scene.visualMode === "stockVideo";
   const needsPhoto = scene.visualMode === "stockImage";
@@ -36,11 +40,13 @@ export async function resolveVisual(
     // 1. Pexels — paid (free key, but counts as a "paid provider"). Skip in demo.
     if (!demo && process.env.PEXELS_API_KEY) {
       asset = await tryProvider("pexels", () => fetchFromPexels(scene));
+      if (asset) console.info(`[assets] [${scene.searchTerms[0]}] → pexels ✓`);
     }
 
     // 2. Pixabay — same treatment as Pexels.
     if (!asset && !needsVideo && !demo && process.env.PIXABAY_API_KEY) {
       asset = await tryProvider("pixabay", () => fetchFromPixabay(scene));
+      if (asset) console.info(`[assets] [${scene.searchTerms[0]}] → pixabay ✓`);
     }
 
     // 3. Openverse — free, no API key required, CC-licensed images.
@@ -48,12 +54,14 @@ export async function resolveVisual(
     // demo videos from being a 100% text slideshow.
     if (!asset) {
       asset = await tryProvider("openverse", () => fetchFromOpenverse(scene));
+      if (asset) console.info(`[assets] [${scene.searchTerms[0]}] → openverse ✓`);
     }
   }
 
   // 4. Always-available final fallback: generated SVG motion graphic
   if (!asset) {
     asset = generateMotionGraphic(scene, style);
+    console.info(`[assets] [${scene.searchTerms[0]}] → svg fallback (no photo found)`);
   }
 
   await assetCache.set(cacheKey, asset);
