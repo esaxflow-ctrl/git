@@ -21,7 +21,11 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       overlayOpacity: 0.4,
       vignetteStrength: 0.7,
       tint: null,
-      imageFilter: "brightness(0.78) contrast(1.18) saturate(0.7)",
+      // Heavier desaturation + slight cool cast unifies photos that come
+      // from very different sources (Pexels portrait vs landscape vs
+      // product shot). Without this each photo brings its own white
+      // balance and the cut feels disjointed.
+      imageFilter: "brightness(0.7) contrast(1.25) saturate(0.5) sepia(0.08) hue-rotate(-8deg)",
     },
     narrationStyle: "dramatic",
     visualMixRules: {

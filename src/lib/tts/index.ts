@@ -3,8 +3,9 @@ import { audioCache, audioCacheKey } from "../cache";
 import { isKokoroAvailable, synthesizeWithKokoro } from "./kokoro";
 import { isPiperAvailable, synthesizeWithPiper } from "./piper";
 import { isMacosSayAvailable, synthesizeWithMacosSay } from "./macos";
+import { isWinSayAvailable, synthesizeWithWinSay } from "./winsay";
 
-export type TtsProvider = "kokoro" | "piper" | "macos_say" | "silent";
+export type TtsProvider = "kokoro" | "piper" | "macos_say" | "winsay" | "silent";
 
 export interface TtsResult {
   audioResults: AudioResult[];
@@ -43,6 +44,9 @@ async function synthesizeOne(
     case "macos_say":
       result = await synthesizeWithMacosSay(text);
       break;
+    case "winsay":
+      result = await synthesizeWithWinSay(text, options);
+      break;
     default:
       result = { ...SILENT_RESULT, durationMs: estimateSilentDuration(text) };
   }
@@ -71,6 +75,10 @@ export async function synthesizeScenes(
     provider = "piper";
   } else if (isMacosSayAvailable()) {
     provider = "macos_say";
+  } else if (isWinSayAvailable()) {
+    // Last-resort real voice on Windows. Quality is "Microsoft Narrator"
+    // — flat but real speech, beats a silent video.
+    provider = "winsay";
   }
 
   console.info(`[tts] Using provider: ${provider}`);

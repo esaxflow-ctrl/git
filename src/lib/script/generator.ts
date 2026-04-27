@@ -89,6 +89,10 @@ async function callOllama(prompt: string): Promise<string> {
       model: OLLAMA_MODEL,
       prompt,
       stream: false,
+      // Force valid JSON — small models otherwise emit malformed output
+      // (missing commas, unbalanced brackets) that even our repair pass
+      // can't always fix.
+      format: "json",
       options: { temperature: 0.85 },
     }),
     // 4 minutes — first call after Ollama starts loads the model into RAM

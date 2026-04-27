@@ -28,6 +28,11 @@ async function callOllama(prompt: string): Promise<string> {
       model: OLLAMA_MODEL,
       prompt,
       stream: false,
+      // format: "json" makes Ollama constrain output to syntactically
+      // valid JSON. Without it, small models (llama3.2:3b) routinely
+      // emit missing commas / unbalanced brackets and our repair pass
+      // can only fix some of those mistakes.
+      format: "json",
       options: { temperature: 0.7 },
     }),
     // First request after Ollama starts has to load the model into RAM

@@ -167,7 +167,7 @@ export type VisualAsset = z.infer<typeof VisualAssetSchema>;
 export const AudioResultSchema = z.object({
   path: z.string(),
   durationMs: z.number().nonnegative(),
-  provider: z.enum(["kokoro", "piper", "macos_say", "silent"]),
+  provider: z.enum(["kokoro", "piper", "macos_say", "winsay", "silent"]),
   wordTimings: z.array(WordTimingSchema).nullable(),
 });
 export type AudioResult = z.infer<typeof AudioResultSchema>;
@@ -282,7 +282,7 @@ export const SynthesizeResponseSchema = z.object({
   audioResults: z.array(
     AudioResultSchema.omit({ path: true }).extend({
       durationMs: z.number(),
-      provider: z.enum(["kokoro", "piper", "macos_say", "silent"]),
+      provider: z.enum(["kokoro", "piper", "macos_say", "winsay", "silent"]),
       wordTimings: z.array(WordTimingSchema).nullable(),
     })
   ),
@@ -297,7 +297,7 @@ export const RenderRequestSchema = z.object({
   audioResults: z.array(
     z.object({
       durationMs: z.number(),
-      provider: z.enum(["kokoro", "piper", "macos_say", "silent"]),
+      provider: z.enum(["kokoro", "piper", "macos_say", "winsay", "silent"]),
       wordTimings: z.array(WordTimingSchema).nullable(),
     })
   ),
