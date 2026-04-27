@@ -264,26 +264,36 @@ class Tracker:
         log.info("Wallet refresh complete")
 
     async def _discover_wallets_from_markets(self) -> list[dict]:
-        """Discover active traders from the Polygon blockchain (public, no auth required).
+        """Discover active Polymarket traders from on-chain logs.
 
-        Queries eth_getLogs on Polymarket's CLOB Exchange contracts for recent OrderFilled
-        events. maker/taker in each event are proxy wallet addresses — indexed, always public.
+        Phase 1: direct Polygon JSON-RPC eth_getLogs (50-block chunks to stay under limits).
+        Phase 2: Polygonscan API fallback (free, no key required, just rate-limited to 1/5s).
         """
         import aiohttp as _aiohttp
 
-        # Polymarket CLOB Exchange contracts on Polygon (emit OrderFilled with maker/taker)
-        # Using exchange contracts rather than the CTF token to avoid log-size limits.
+        # Polymarket trading contracts on Polygon Mainnet
         CONTRACTS = [
-            "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",  # CLOB Exchange
-            "0xC5d563A36AE78145C45a50134d48A1215220f80a",  # Neg Risk Exchange
+            "0x4bFb41d5B3570DeFd03C39a9A4D8dE6Bd8B8982E",  # CTF Exchange (all binary markets)
+            "0xC5d563A36AE78145C45a50134d48A1215220f80a",  # Neg Risk Exchange (multi-outcome)
         ]
-
-        # Free public Polygon RPC endpoints (no API key needed)
         RPC_ENDPOINTS = [
             "https://polygon-rpc.com",
             "https://rpc.ankr.com/polygon",
             "https://polygon-bor-rpc.publicnode.com",
         ]
+
+        def _addrs_from_logs(logs: list) -> list[str]:
+            """Extract zero-padded Ethereum address topics → lower-case addresses."""
+            out, seen = [], set()
+            for entry in logs:
+                for topic in entry.get("topics", [])[1:]:
+                    if (isinstance(topic, str) and len(topic) == 66
+                            and topic.startswith("0x000000000000000000000000")):
+                        addr = ("0x" + topic[26:]).lower()
+                        if addr not in seen and addr != "0x" + "0" * 40:
+                            seen.add(addr)
+                            out.append(addr)
+            return out
 
         async def _rpc(session, url: str, method: str, params: list) -> dict:
             async with session.post(
@@ -295,55 +305,107 @@ class Tracker:
 
         seen: set[str] = set()
         entries: list[dict] = []
+        latest_block = 0
 
-        for rpc_url in RPC_ENDPOINTS:
-            try:
-                async with _aiohttp.ClientSession() as session:
-                    bn_resp = await _rpc(session, rpc_url, "eth_blockNumber", [])
-                    if "error" in bn_resp:
-                        log.warning("Polygon RPC %s blockNumber error: %s", rpc_url, bn_resp["error"])
+        async with _aiohttp.ClientSession() as session:
+
+            # ── Phase 1: direct JSON-RPC ──────────────────────────────────────
+            for rpc_url in RPC_ENDPOINTS:
+                try:
+                    bn = await _rpc(session, rpc_url, "eth_blockNumber", [])
+                    if "error" in bn or "result" not in bn:
+                        log.warning("RPC %s blockNumber: %s", rpc_url, bn.get("error", "no result"))
                         continue
-                    latest = int(bn_resp["result"], 16)
-                    log.info("Polygon RPC %s latest block: %d", rpc_url, latest)
+                    latest_block = int(bn["result"], 16)
 
-                    # Query last 3000 blocks in 500-block chunks (~25 min of trades)
-                    for chunk_start in range(latest - 3000, latest, 500):
-                        chunk_end = min(chunk_start + 499, latest)
+                    # Verify the contract actually has code (catches wrong address early)
+                    code = (await _rpc(session, rpc_url, "eth_getCode",
+                                       [CONTRACTS[0], "latest"])).get("result", "0x")
+                    if not code or code == "0x":
+                        log.warning("No bytecode at %s via %s — wrong contract address?",
+                                    CONTRACTS[0][:12], rpc_url)
+                        continue
+
+                    log.info("Polygon RPC %s block=%d contract=OK, scanning last 500 blocks…",
+                             rpc_url, latest_block)
+                    total_raw = 0
+                    # 50-block chunks to stay under free-RPC log-size limits
+                    for chunk_start in range(latest_block - 500, latest_block, 50):
+                        chunk_end = min(chunk_start + 49, latest_block)
                         for contract in CONTRACTS:
-                            logs_resp = await _rpc(session, rpc_url, "eth_getLogs", [{
+                            r = await _rpc(session, rpc_url, "eth_getLogs", [{
                                 "address": contract,
                                 "fromBlock": hex(chunk_start),
                                 "toBlock": hex(chunk_end),
                             }])
-                            if "error" in logs_resp:
-                                log.warning("eth_getLogs error from %s: %s", rpc_url, logs_resp["error"])
+                            if "error" in r:
+                                log.warning("eth_getLogs [%s..%s] %s: %s",
+                                            hex(chunk_start), hex(chunk_end),
+                                            contract[:12], r["error"])
                                 continue
-                            chunk = logs_resp.get("result", [])
-                            if not isinstance(chunk, list):
+                            raw = r.get("result", [])
+                            if not isinstance(raw, list):
                                 continue
-                            for entry in chunk:
-                                for topic in entry.get("topics", [])[1:]:
-                                    # Ethereum addresses in topics: 0x + 24 zero chars + 40-char addr
-                                    if (isinstance(topic, str) and len(topic) == 66
-                                            and topic.startswith("0x000000000000000000000000")):
-                                        addr = "0x" + topic[26:]
-                                        if addr != "0x" + "0" * 40 and addr not in seen:
-                                            seen.add(addr)
-                                            entries.append({"address": addr.lower()})
+                            total_raw += len(raw)
+                            for addr in _addrs_from_logs(raw):
+                                if addr not in seen:
+                                    seen.add(addr)
+                                    entries.append({"address": addr})
 
-                log.info("Polygon RPC discovery (%s): %d unique addresses found", rpc_url, len(entries))
-                if entries:
-                    break  # success
+                    log.info("RPC discovery %s: %d raw logs → %d addresses",
+                             rpc_url, total_raw, len(entries))
+                    if entries:
+                        return entries
 
-            except Exception as exc:
-                log.warning("Polygon RPC %s failed: %s", rpc_url, exc)
+                except Exception as exc:
+                    log.warning("Polygon RPC %s: %s", rpc_url, exc)
+
+            # ── Phase 2: Polygonscan fallback ─────────────────────────────────
+            log.info("Direct RPC returned 0 — trying Polygonscan API…")
+            scan_key = getattr(settings, "polygonscan_api_key", "")
+            from_block = max(0, latest_block - 2000) if latest_block else 0
+
+            for contract in CONTRACTS:
+                try:
+                    params: dict = {
+                        "module": "logs", "action": "getLogs",
+                        "address": contract,
+                        "fromBlock": from_block,
+                        "toBlock": "latest",
+                        "page": 1, "offset": 1000,
+                    }
+                    if scan_key:
+                        params["apikey"] = scan_key
+                    async with session.get(
+                        "https://api.polygonscan.com/api",
+                        params=params,
+                        timeout=_aiohttp.ClientTimeout(total=30),
+                    ) as resp:
+                        data = await resp.json()
+
+                    if data.get("status") == "1" and isinstance(data.get("result"), list):
+                        raw = data["result"]
+                        log.info("Polygonscan %s: %d logs", contract[:12], len(raw))
+                        for addr in _addrs_from_logs(raw):
+                            if addr not in seen:
+                                seen.add(addr)
+                                entries.append({"address": addr})
+                    else:
+                        log.warning("Polygonscan %s: status=%s msg=%s",
+                                    contract[:12], data.get("status"), data.get("message"))
+
+                    if not scan_key:
+                        await asyncio.sleep(5)  # 1/5s without API key
+
+                except Exception as exc:
+                    log.warning("Polygonscan %s: %s", contract[:12], exc)
 
         if not entries:
             log.warning(
-                "Polygon RPC discovery found 0 addresses. "
-                "Seed manually: python main.py add-wallet <address from polymarket.com/profile/0x...>"
+                "All discovery methods returned 0 addresses. "
+                "Add POLYGONSCAN_API_KEY to .env for more reliable discovery, or seed manually: "
+                "python main.py add-wallet <address from polymarket.com/profile/0x...>"
             )
-
         return entries
 
     async def _upsert_wallet(self, address: str, leaderboard_entry: dict) -> None:

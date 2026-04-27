@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite+aiosqlite:///polymarket_tracker.db"
 
+    # Optional: free key from polygonscan.com/register — improves on-chain wallet discovery
+    polygonscan_api_key: str = ""
+
     # Polymarket API base URLs
     gamma_api_base: str = "https://gamma-api.polymarket.com"
     clob_api_base: str = "https://clob.polymarket.com"
