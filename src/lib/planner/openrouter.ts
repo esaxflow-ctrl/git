@@ -1,16 +1,10 @@
 import { ScenePlan, ScenePlanSchema, PlannerOptions } from "../validation/schemas";
 import { z } from "zod";
 import { buildPlannerPrompt } from "./prompt";
+import { parseLlmJson, coerceScenePlanShape } from "../llm/repair";
 
 const OPENROUTER_MODEL =
   process.env.OPENROUTER_MODEL ?? "mistralai/mistral-7b-instruct:free";
-
-function extractJSON(text: string): string {
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1) throw new Error("No JSON array found in response");
-  return text.slice(start, end + 1);
-}
 
 export async function generateWithOpenRouter(
   script: string,
@@ -54,14 +48,7 @@ export async function generateWithOpenRouter(
   const content = data.choices[0]?.message?.content;
   if (!content) throw new Error("Empty response from OpenRouter");
 
-  let jsonStr: string;
-  try {
-    jsonStr = extractJSON(content);
-  } catch {
-    throw new Error(`Could not extract JSON from OpenRouter response: ${content.slice(0, 200)}`);
-  }
-
-  const parsed = JSON.parse(jsonStr);
+  const parsed = parseLlmJson(content, "array", coerceScenePlanShape);
   const result = z.array(ScenePlanSchema).safeParse(parsed);
   if (!result.success) {
     throw new Error(`OpenRouter response failed schema validation: ${result.error.message}`);

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { buildScriptPrompt, ScriptPromptInput } from "./prompt";
 import { validateScript, ScriptValidationResult } from "./validate";
+import { parseLlmJson, coerceStringArray } from "../llm/repair";
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "mistral";
@@ -39,13 +40,34 @@ export interface ScriptGenerationResult {
   validation: ScriptValidationResult;
 }
 
-function extractJSON(text: string): string {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1) {
-    throw new Error("No JSON object found in response");
+// Coerce common LLM mistakes in the script-generator output shape.
+// Most of these fields should be arrays of strings; small models often
+// return them as space-separated strings.
+function coerceGeneratedShape(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const obj = value as Record<string, unknown>;
+  if ("alternateHooks" in obj) obj.alternateHooks = coerceStringArray(obj.alternateHooks);
+  if ("captionLines" in obj) obj.captionLines = coerceStringArray(obj.captionLines);
+  if ("structure" in obj && obj.structure && typeof obj.structure === "object") {
+    const s = obj.structure as Record<string, unknown>;
+    if ("points" in s) s.points = coerceStringArray(s.points);
   }
-  return text.slice(start, end + 1);
+  if (typeof obj.wordCount === "string") {
+    const n = Number(obj.wordCount);
+    if (!Number.isNaN(n)) obj.wordCount = n;
+  }
+  if (Array.isArray(obj.scenePrompts)) {
+    for (const sp of obj.scenePrompts as unknown[]) {
+      if (sp && typeof sp === "object") {
+        const o = sp as Record<string, unknown>;
+        if (typeof o.estimatedSeconds === "string") {
+          const n = Number(o.estimatedSeconds);
+          if (!Number.isNaN(n)) o.estimatedSeconds = n;
+        }
+      }
+    }
+  }
+  return obj;
 }
 
 async function isOllamaAvailable(): Promise<boolean> {
@@ -114,7 +136,7 @@ async function callOpenRouter(prompt: string): Promise<string> {
 }
 
 function parseGenerated(raw: string): GeneratedScript {
-  const json = JSON.parse(extractJSON(raw));
+  const json = parseLlmJson(raw, "object", coerceGeneratedShape);
   const result = GeneratedScriptSchema.safeParse(json);
   if (!result.success) {
     throw new Error(`Schema validation failed: ${result.error.message}`);

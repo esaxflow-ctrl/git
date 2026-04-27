@@ -1,6 +1,7 @@
 import { ScenePlan, ScenePlanSchema, PlannerOptions } from "../validation/schemas";
 import { z } from "zod";
 import { buildPlannerPrompt } from "./prompt";
+import { parseLlmJson, coerceScenePlanShape } from "../llm/repair";
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "mistral";
@@ -44,14 +45,6 @@ async function callOllama(prompt: string): Promise<string> {
   return data.response;
 }
 
-function extractJSON(text: string): string {
-  // Find first '[' and last ']'
-  const start = text.indexOf("[");
-  const end = text.lastIndexOf("]");
-  if (start === -1 || end === -1) throw new Error("No JSON array found in response");
-  return text.slice(start, end + 1);
-}
-
 export async function generateWithOllama(
   script: string,
   options: PlannerOptions
@@ -65,17 +58,22 @@ export async function generateWithOllama(
     throw new Error(`Ollama call failed: ${err}`);
   }
 
-  let jsonStr: string;
+  // Robust parse: strips comments / trailing commas, then coerces common
+  // type mismatches (emphasisWords / searchTerms returned as strings).
+  let parsed: unknown;
   try {
-    jsonStr = extractJSON(raw);
-  } catch {
-    // Retry with stricter prompt
-    const retryPrompt = prompt + "\n\nIMPORTANT: Return ONLY the JSON array. No text before or after it.";
+    parsed = parseLlmJson(raw, "array", coerceScenePlanShape);
+  } catch (err) {
+    // Retry once with a stricter prompt.
+    const retryPrompt =
+      prompt +
+      "\n\nIMPORTANT: Return ONLY the JSON array. No text before or after. " +
+      "emphasisWords and searchTerms MUST be JSON arrays of strings, e.g. [\"word1\", \"word2\"], not space-separated strings.";
     raw = await callOllama(retryPrompt);
-    jsonStr = extractJSON(raw);
+    parsed = parseLlmJson(raw, "array", coerceScenePlanShape);
+    void err;
   }
 
-  const parsed = JSON.parse(jsonStr);
   const result = z.array(ScenePlanSchema).safeParse(parsed);
   if (!result.success) {
     throw new Error(`Ollama response failed schema validation: ${result.error.message}`);
