@@ -68,8 +68,15 @@ export function volumeAccelerationStrategy(i: VolumeAccelerationInputs): Strateg
 
   score = Math.max(0, Math.min(100, score));
 
+  // Hard velocity gate. If the 5-min volume is not actually accelerating
+  // relative to the trailing 5-min average, this isn't a momentum trade —
+  // it's just a token that exists. Don't recommend acting on it regardless
+  // of other inputs. Stable / decelerating volume is a worse signal for
+  // entry than no signal.
   let rec: StrategySignal['recommendation'] = 'PASS';
-  if (score >= 75) rec = 'PAPER_BUY';
+  if (ratio < 1.3 && score < 70) {
+    warnings.push(`5m volume ${ratio.toFixed(2)}x trailing — not accelerating`);
+  } else if (score >= 75) rec = 'PAPER_BUY';
   else if (score >= 55) rec = 'WATCH';
 
   return {

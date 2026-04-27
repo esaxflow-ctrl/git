@@ -72,12 +72,19 @@ export function scoreTooLate(i: TooLateInputs): TooLateResult {
     reasons.push('market cap doubled in <30 min — likely too late');
   }
 
-  // 1h move already very large.
+  // 1h move already very large. Tightened: a token up 100%+ in an hour is
+  // almost always already past the move, regardless of other signals.
   if (i.snap.priceChange1hPct >= 300) {
-    penalty += 15;
-    reasons.push(`1h price +${i.snap.priceChange1hPct.toFixed(0)}%`);
+    penalty += 40;
+    reasons.push(`1h price +${i.snap.priceChange1hPct.toFixed(0)}% — likely terminal`);
   } else if (i.snap.priceChange1hPct >= 150) {
-    penalty += 8;
+    penalty += 25;
+    reasons.push(`1h price +${i.snap.priceChange1hPct.toFixed(0)}%`);
+  } else if (i.snap.priceChange1hPct >= 100) {
+    penalty += 15;
+    reasons.push(`1h price +${i.snap.priceChange1hPct.toFixed(0)}% — exhaustion risk`);
+  } else if (i.snap.priceChange1hPct >= 50) {
+    penalty += 5;
   }
 
   penalty = Math.max(0, Math.min(100, Math.round(penalty)));

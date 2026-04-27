@@ -363,4 +363,33 @@ CREATE TABLE IF NOT EXISTS examined_pools (
   examined_at INTEGER NOT NULL,
   early_buyers_seen INTEGER NOT NULL DEFAULT 0
 );
+
+-- Per-(wallet, token) realised PnL accumulator. Updated each time we observe
+-- a buy or sell for that wallet on that token in pool transactions. SOL
+-- amounts are derived from the swap's nativeTransfers. realised_pnl_sol is
+-- only meaningful once both sides exist; for buy-only positions it's null
+-- (we'd need an oracle to value the still-held bag).
+CREATE TABLE IF NOT EXISTS wallet_token_pnl (
+  wallet TEXT NOT NULL,
+  token_address TEXT NOT NULL,
+  total_buy_sol REAL NOT NULL DEFAULT 0,
+  total_sell_sol REAL NOT NULL DEFAULT 0,
+  total_buys INTEGER NOT NULL DEFAULT 0,
+  total_sells INTEGER NOT NULL DEFAULT 0,
+  first_buy_ts INTEGER,
+  last_sell_ts INTEGER,
+  realised_pnl_sol REAL,
+  PRIMARY KEY (wallet, token_address)
+);
+CREATE INDEX IF NOT EXISTS idx_wtpnl_wallet ON wallet_token_pnl(wallet);
+
+-- Aggregated wallet-level realised PnL summary. Refreshed when we promote.
+CREATE TABLE IF NOT EXISTS wallet_pnl_summary (
+  wallet TEXT PRIMARY KEY,
+  tokens_with_realised INTEGER NOT NULL DEFAULT 0,
+  net_realised_pnl_sol REAL NOT NULL DEFAULT 0,
+  win_rate REAL,
+  avg_hold_minutes REAL,
+  updated_at INTEGER NOT NULL
+);
 `;

@@ -74,9 +74,9 @@ const schema = z.object({
   KILL_SWITCH_FILE: z.string().default('STOP_BOT.txt'),
   DB_PATH: z.string().default('./data/bot.sqlite'),
 
-  PROFIT_LADDER: z.string().default('50:0.25,100:0.25,200:0.25'),
-  TRAILING_STOP_PERCENT: numFromEnv(20),
-  HARD_STOP_LOSS_PERCENT: numFromEnv(35),
+  PROFIT_LADDER: z.string().default('30:0.33,70:0.33,150:0.33'),
+  TRAILING_STOP_PERCENT: numFromEnv(15),
+  HARD_STOP_LOSS_PERCENT: numFromEnv(25),
   TIME_BASED_EXIT_MINUTES: numFromEnv(180),
 });
 

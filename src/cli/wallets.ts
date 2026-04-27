@@ -64,10 +64,28 @@ async function main(): Promise<void> {
         .raw()
         .prepare(
           filter === 'proposed'
-            ? `SELECT address, label, score, notes, added_at FROM watched_wallets WHERE notes LIKE '%peak-based%' OR notes LIKE '%sniper%' ORDER BY added_at DESC LIMIT 100`
-            : `SELECT address, label, score, notes, added_at FROM watched_wallets ORDER BY score DESC, added_at DESC LIMIT 200`,
+            ? `SELECT w.address, w.label, w.score, w.notes, w.added_at,
+                      s.tokens_with_realised, s.net_realised_pnl_sol, s.win_rate
+               FROM watched_wallets w
+               LEFT JOIN wallet_pnl_summary s ON s.wallet = w.address
+               WHERE w.notes LIKE '%realised%' OR w.notes LIKE '%sniper%'
+               ORDER BY s.net_realised_pnl_sol DESC, w.added_at DESC LIMIT 100`
+            : `SELECT w.address, w.label, w.score, w.notes, w.added_at,
+                      s.tokens_with_realised, s.net_realised_pnl_sol, s.win_rate
+               FROM watched_wallets w
+               LEFT JOIN wallet_pnl_summary s ON s.wallet = w.address
+               ORDER BY w.score DESC, w.added_at DESC LIMIT 200`,
         )
-        .all() as Array<{ address: string; label: string; score: number; notes: string | null; added_at: number }>;
+        .all() as Array<{
+        address: string;
+        label: string;
+        score: number;
+        notes: string | null;
+        added_at: number;
+        tokens_with_realised: number | null;
+        net_realised_pnl_sol: number | null;
+        win_rate: number | null;
+      }>;
       if (rows.length === 0) {
         console.log('No wallets in watch list yet. Run `pnpm wallet:discover` first.');
         break;
@@ -76,7 +94,17 @@ async function main(): Promise<void> {
       console.log('-'.repeat(78));
       for (const r of rows) {
         const date = new Date(r.added_at).toISOString().slice(0, 19).replace('T', ' ');
-        console.log(`${r.address}  ${r.label.padEnd(18)} ${String(r.score).padStart(3)}  ${date}`);
+        const pnl =
+          r.net_realised_pnl_sol !== null
+            ? `${r.net_realised_pnl_sol >= 0 ? '+' : ''}${r.net_realised_pnl_sol.toFixed(3)} SOL`
+            : 'no sells observed';
+        const wins =
+          r.win_rate !== null && r.tokens_with_realised
+            ? `${(r.win_rate * 100).toFixed(0)}% on ${r.tokens_with_realised}t`
+            : '—';
+        console.log(
+          `${r.address}  ${r.label.padEnd(18)} score=${String(r.score).padStart(3)}  realised=${pnl.padStart(14)}  ${wins}`,
+        );
         if (r.notes) console.log(`    ${r.notes}`);
       }
       break;
@@ -128,12 +156,14 @@ async function main(): Promise<void> {
       console.log('Running wallet discovery (this can take 1-2 minutes)...');
       const stats = await wd.runOnce();
       console.log('Discovery stats:');
-      console.log(`  pools examined        : ${stats.examinedPools}`);
-      console.log(`  pools skipped (cached): ${stats.skippedAlreadyExamined}`);
-      console.log(`  new observations      : ${stats.newObservations}`);
-      console.log(`  wallets proposed      : ${stats.proposedWallets}`);
+      console.log(`  pools examined            : ${stats.examinedPools}`);
+      console.log(`  pools skipped (cached)    : ${stats.skippedAlreadyExamined}`);
+      console.log(`  new buyer observations    : ${stats.newObservations}`);
+      console.log(`  new sells recorded        : ${stats.newSellsRecorded}`);
+      console.log(`  wallets w/ realised PnL   : ${stats.walletsWithRealisedPnl}`);
+      console.log(`  wallets proposed          : ${stats.proposedWallets}`);
       console.log('');
-      console.log('Run `pnpm wallet:list proposed` to review.');
+      console.log('Run `pnpm wallet:list:proposed` to review.');
       break;
     }
 
