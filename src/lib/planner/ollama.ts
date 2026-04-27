@@ -29,7 +29,11 @@ async function callOllama(prompt: string): Promise<string> {
       stream: false,
       options: { temperature: 0.7 },
     }),
-    signal: AbortSignal.timeout(30000),
+    // First request after Ollama starts has to load the model into RAM
+    // (~2 GB for llama3.2:3b, slower on CPU-only). Subsequent requests
+    // are much faster — but the first call routinely hits 60–120s, so
+    // we give it 4 minutes before giving up.
+    signal: AbortSignal.timeout(240_000),
   });
 
   if (!res.ok) {

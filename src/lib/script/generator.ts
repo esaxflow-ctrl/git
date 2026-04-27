@@ -69,7 +69,9 @@ async function callOllama(prompt: string): Promise<string> {
       stream: false,
       options: { temperature: 0.85 },
     }),
-    signal: AbortSignal.timeout(60000),
+    // 4 minutes — first call after Ollama starts loads the model into RAM
+    // and that alone can take 60–120s on a CPU-only machine.
+    signal: AbortSignal.timeout(240_000),
   });
   if (!res.ok) {
     throw new Error(`Ollama returned ${res.status}: ${await res.text()}`);
