@@ -2,6 +2,7 @@ import { z } from "zod";
 import { buildScriptPrompt, ScriptPromptInput } from "./prompt";
 import { validateScript, ScriptValidationResult } from "./validate";
 import { parseLlmJson, coerceStringArray } from "../llm/repair";
+import { pickTemplate, fillTemplate } from "./templateFiller";
 
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://localhost:11434";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "mistral";
@@ -267,45 +268,66 @@ function deterministicScript(input: ScriptPromptInput): GeneratedScript {
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
+//
+// Default path is the curated template library — deterministic, retention-
+// tested, ~170 words, every script structurally complete. LLM paths are
+// only used when SCRIPT_PROVIDER env var is set explicitly, since small
+// local models (llama3.2:3b) routinely produce malformed JSON or
+// off-target word counts and template output is more reliable.
 
-export async function generateScript(
+async function generateViaLlm(
   input: ScriptPromptInput
-): Promise<ScriptGenerationResult> {
+): Promise<ScriptGenerationResult | null> {
   const prompt = buildScriptPrompt(input);
+  const provider = (process.env.SCRIPT_PROVIDER ?? "").toLowerCase();
 
-  // Try Ollama
-  if (await isOllamaAvailable()) {
-    try {
-      console.info("[script] Generating via Ollama");
-      const raw = await callOllama(prompt);
-      const generated = parseGenerated(raw);
-      const validation = validateScript(generated.script);
-      return { generated, provider: "ollama", validation };
-    } catch (err) {
-      console.warn(`[script:ollama] failed: ${err}`);
+  if (provider === "ollama") {
+    if (await isOllamaAvailable()) {
+      try {
+        console.info("[script] Generating via Ollama (SCRIPT_PROVIDER=ollama)");
+        const raw = await callOllama(prompt);
+        const generated = parseGenerated(raw);
+        const validation = validateScript(generated.script);
+        return { generated, provider: "ollama", validation };
+      } catch (err) {
+        console.warn(`[script:ollama] failed: ${err}. Falling back to template.`);
+      }
+    } else {
+      console.info("[script] SCRIPT_PROVIDER=ollama set but Ollama not reachable");
     }
-  } else {
-    console.info("[script] Ollama not available, skipping");
   }
 
-  // Try OpenRouter
-  if (process.env.OPENROUTER_API_KEY) {
+  if (provider === "openrouter" && process.env.OPENROUTER_API_KEY) {
     try {
-      console.info("[script] Generating via OpenRouter");
+      console.info("[script] Generating via OpenRouter (SCRIPT_PROVIDER=openrouter)");
       const raw = await callOpenRouter(prompt);
       const generated = parseGenerated(raw);
       const validation = validateScript(generated.script);
       return { generated, provider: "openrouter", validation };
     } catch (err) {
-      console.warn(`[script:openrouter] failed: ${err}`);
+      console.warn(`[script:openrouter] failed: ${err}. Falling back to template.`);
     }
-  } else {
-    console.info("[script] OpenRouter API key not set, skipping");
   }
 
-  // Deterministic fallback
-  console.info("[script] Using deterministic template fallback");
-  const generated = deterministicScript(input);
+  return null;
+}
+
+export async function generateScript(
+  input: ScriptPromptInput
+): Promise<ScriptGenerationResult> {
+  // Opt-in LLM path first (only if SCRIPT_PROVIDER env is set).
+  const llm = await generateViaLlm(input);
+  if (llm) return llm;
+
+  // Default path: curated template library.
+  const template = pickTemplate(input);
+  console.info(`[script] Generating via template: ${template.id} (${template.name})`);
+  const generated = fillTemplate(template, input);
   const validation = validateScript(generated.script);
   return { generated, provider: "deterministic", validation };
 }
+
+// Kept for back-compat — older deterministic generator. Not called by the
+// default path; templates produce better output. Will be removed in a
+// future cleanup pass.
+void deterministicScript;

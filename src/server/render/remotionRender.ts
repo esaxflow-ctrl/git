@@ -9,10 +9,18 @@ import { buildCaptionEntries } from "../../lib/captions";
 
 let cachedBundlePath: string | null = null;
 
-// Target output duration band (60s ±2s).
+// Target output duration band (60s ±2s) — applied for the silent-fallback
+// path. When real audio drives the timeline we don't pad up to 60s,
+// because doing so leaves dead air at the end of the video.
 const TARGET_DURATION_MS = 60_000;
 const MIN_DURATION_MS = 58_000;
 const MAX_DURATION_MS = 62_000;
+// Hard ceiling regardless of mode — anything past this gets scaled down.
+const HARD_CEILING_MS = 75_000;
+// Tail buffer added to the last scene when audio drives so the final word
+// doesn't get clipped by the cut. Small enough to not be perceived as dead
+// air, large enough to avoid abrupt endings.
+const AUDIO_TAIL_BUFFER_MS = 800;
 
 /**
  * Per-scene durations.
@@ -40,6 +48,13 @@ function computeSceneDurations(job: RenderJob): number[] {
   const { scenes, audioResults, styleProfile, audioEnabled } = job;
   const { pacingRules } = styleProfile;
 
+  // "Audio drives" when at least one scene has real (non-silent, non-zero)
+  // audio. In that mode the audio length is authoritative — we don't pad
+  // to a fixed 60s because that creates dead air after the voice ends.
+  const audioDriven =
+    audioEnabled &&
+    audioResults.some((a) => a && a.provider !== "silent" && a.durationMs > 0);
+
   const raw = scenes.map((scene, i) => {
     const audio = audioResults[i];
     const hasRealAudio =
@@ -63,10 +78,10 @@ function computeSceneDurations(job: RenderJob): number[] {
 
   const rawTotalMs = raw.reduce((a, b) => a + b, 0);
   console.info(
-    `[render] Pre-enforce per-scene ms: [${raw.join(", ")}] total=${rawTotalMs}ms (${(rawTotalMs / 1000).toFixed(2)}s)`
+    `[render] Pre-enforce per-scene ms (audioDriven=${audioDriven}): [${raw.join(", ")}] total=${rawTotalMs}ms (${(rawTotalMs / 1000).toFixed(2)}s)`
   );
 
-  const enforced = enforceTotalDuration(raw);
+  const enforced = enforceTotalDuration(raw, audioDriven);
   const enforcedTotalMs = enforced.reduce((a, b) => a + b, 0);
   console.info(
     `[render] Post-enforce per-scene ms: [${enforced.join(", ")}] total=${enforcedTotalMs}ms (${(enforcedTotalMs / 1000).toFixed(2)}s)`
@@ -85,31 +100,49 @@ function computeSceneDurations(job: RenderJob): number[] {
  * ever scale UP for the silent path. For the audio path we extend the last
  * scene rather than scaling, so we never cut audio off.)
  */
-function enforceTotalDuration(durationsMs: number[]): number[] {
+function enforceTotalDuration(durationsMs: number[], audioDriven: boolean): number[] {
   const total = durationsMs.reduce((a, b) => a + b, 0);
-  if (total >= MIN_DURATION_MS && total <= MAX_DURATION_MS) return durationsMs;
 
-  if (total < MIN_DURATION_MS) {
-    // Extend the last scene to hit the 60s target. This adds trailing visual
-    // but does not corrupt any audio that is shorter than its scene.
-    const padding = TARGET_DURATION_MS - total;
+  // Audio-driven path: the voice is the spine of the video. We add a tiny
+  // tail buffer so the final word doesn't get clipped, then trim only if
+  // the total blew past the hard ceiling. We do NOT pad up to 60s — that
+  // is what created the dead-air "last 15 seconds with no voice" issue.
+  if (audioDriven) {
+    if (total > HARD_CEILING_MS) {
+      const scale = HARD_CEILING_MS / total;
+      console.info(
+        `[render] Audio-driven total ${total}ms above ${HARD_CEILING_MS}ms ceiling; scaled by ${scale.toFixed(3)}`
+      );
+      return durationsMs.map((d) => Math.max(1500, Math.round(d * scale)));
+    }
     const out = [...durationsMs];
-    out[out.length - 1] = (out[out.length - 1] ?? 0) + padding;
+    if (out.length > 0) {
+      out[out.length - 1] = (out[out.length - 1] ?? 0) + AUDIO_TAIL_BUFFER_MS;
+    }
     console.info(
-      `[render] Total ${total}ms below floor; padded last scene by ${padding}ms → ${TARGET_DURATION_MS}ms target`
+      `[render] Audio-driven total ${total}ms; added ${AUDIO_TAIL_BUFFER_MS}ms tail buffer (no 60s padding)`
     );
     return out;
   }
 
-  // total > MAX: scale every scene down to TARGET, preserving ratios.
-  // Note: when audio drives a scene, scaling down can truncate it. We
-  // accept this only when the timeline overruns the 62s ceiling — better to
-  // fit than to overrun. Long overruns indicate the script is too long;
-  // the script validator surfaces this earlier.
+  // Silent/estimated path: enforce the 58–62s band so silent-mode demos
+  // still hit a consistent length.
+  if (total >= MIN_DURATION_MS && total <= MAX_DURATION_MS) return durationsMs;
+
+  if (total < MIN_DURATION_MS) {
+    const padding = TARGET_DURATION_MS - total;
+    const out = [...durationsMs];
+    out[out.length - 1] = (out[out.length - 1] ?? 0) + padding;
+    console.info(
+      `[render] Silent total ${total}ms below floor; padded last scene by ${padding}ms → ${TARGET_DURATION_MS}ms target`
+    );
+    return out;
+  }
+
   const scale = TARGET_DURATION_MS / total;
   const out = durationsMs.map((d) => Math.max(2000, Math.round(d * scale)));
   console.info(
-    `[render] Total ${total}ms above ceiling; scaled scenes by ${scale.toFixed(3)} → ${TARGET_DURATION_MS}ms target`
+    `[render] Silent total ${total}ms above ceiling; scaled scenes by ${scale.toFixed(3)} → ${TARGET_DURATION_MS}ms target`
   );
   return out;
 }

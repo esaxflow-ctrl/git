@@ -89,8 +89,13 @@ export interface ExportValidation {
   failures: string[];
 }
 
-const MIN_DURATION_SECONDS = 58;
-const MAX_DURATION_SECONDS = 62;
+// Strict band when the timeline is silent-driven (we explicitly target 60s).
+// Audio-driven renders use the wider band — voice length is authoritative
+// and ranging 45–75s with the audio is fine.
+const SILENT_MIN_DURATION_SECONDS = 58;
+const SILENT_MAX_DURATION_SECONDS = 62;
+const AUDIO_MIN_DURATION_SECONDS = 25;
+const AUDIO_MAX_DURATION_SECONDS = 78;
 // 1080x1920 at H.264 with audio, ~30fps, ~1Mbps avg → ~7-9MB for 60s. Floor
 // at 200KB just to catch zero-byte / corrupt outputs without false positives
 // on heavily-compressed renders.
@@ -167,13 +172,15 @@ export async function validateExport(
   }
 
   if (durationSeconds !== null) {
-    if (durationSeconds < MIN_DURATION_SECONDS) {
+    const minSeconds = audioEnabled ? AUDIO_MIN_DURATION_SECONDS : SILENT_MIN_DURATION_SECONDS;
+    const maxSeconds = audioEnabled ? AUDIO_MAX_DURATION_SECONDS : SILENT_MAX_DURATION_SECONDS;
+    if (durationSeconds < minSeconds) {
       failures.push(
-        `Duration ${durationSeconds.toFixed(2)}s is below ${MIN_DURATION_SECONDS}s floor.`
+        `Duration ${durationSeconds.toFixed(2)}s is below ${minSeconds}s floor.`
       );
-    } else if (durationSeconds > MAX_DURATION_SECONDS) {
+    } else if (durationSeconds > maxSeconds) {
       failures.push(
-        `Duration ${durationSeconds.toFixed(2)}s exceeds ${MAX_DURATION_SECONDS}s ceiling.`
+        `Duration ${durationSeconds.toFixed(2)}s exceeds ${maxSeconds}s ceiling.`
       );
     }
   }

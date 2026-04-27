@@ -106,30 +106,34 @@ export function validateScript(script: string): ScriptValidationResult {
   const hookWordCount = countWords(structure.hook);
   const hookSeconds = estimateSeconds(structure.hook);
 
-  // ── Length gate (135–165 words for 58–62s at 150 wpm) ─────────────────
-  if (wordCount < 120) {
+  // ── Length gate (155–185 words for 60s with neural TTS) ───────────────
+  // Neural voices like ElevenLabs Adam speak ~170 wpm; older estimates of
+  // 150 wpm produced 137-word scripts that ran ~48s of audio inside a
+  // 60s render and left dead air at the end. The new band targets the
+  // realistic neural TTS pacing.
+  if (wordCount < 130) {
     issues.push({
       level: "error",
       code: "too_short",
-      message: `Script is ${wordCount} words (~${estimatedSecondsValue}s). Need 135–165 words for a 60s voiceover.`,
+      message: `Script is ${wordCount} words (~${estimatedSecondsValue}s). Need 155–185 words for a 60s voiceover at neural-TTS pacing.`,
     });
-  } else if (wordCount < 135) {
+  } else if (wordCount < 155) {
     issues.push({
       level: "warning",
       code: "short",
-      message: `Script is ${wordCount} words (~${estimatedSecondsValue}s). 135–165 words is the safe band.`,
+      message: `Script is ${wordCount} words (~${estimatedSecondsValue}s). May leave dead air at end with fast neural voices.`,
     });
-  } else if (wordCount > 175) {
+  } else if (wordCount > 200) {
     issues.push({
       level: "error",
       code: "too_long",
-      message: `Script is ${wordCount} words (~${estimatedSecondsValue}s). Trim to 135–165 to fit 60s.`,
+      message: `Script is ${wordCount} words (~${estimatedSecondsValue}s). Trim to 155–185 to fit 60s.`,
     });
-  } else if (wordCount > 165) {
+  } else if (wordCount > 185) {
     issues.push({
       level: "warning",
       code: "long",
-      message: `Script is ${wordCount} words (~${estimatedSecondsValue}s). Risk of overrunning 62s.`,
+      message: `Script is ${wordCount} words (~${estimatedSecondsValue}s). Risk of overrunning 65s with most voices.`,
     });
   }
 
