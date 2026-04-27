@@ -15,7 +15,7 @@ export const STYLE_PRESETS: Record<string, StyleProfile> = {
       maxWordsPerGroup: 3,
     },
     motionStyle: "ken_burns",
-    transitionStyle: "fade",
+    transitionStyle: "cut",
     colorStrategy: {
       palette: ["#0a0a0a", "#1a1a2e", "#e94560", "#16213e"],
       overlayOpacity: 0.4,

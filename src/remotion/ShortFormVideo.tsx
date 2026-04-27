@@ -120,11 +120,15 @@ function GlobalTransitionLayer({
     const boundary = scenesWithTiming[i].startFrame;
     const d = frame - boundary; // d < 0 = still in previous scene, d >= 0 = in new scene
 
-    if (transitionStyle === "fade" && d >= -8 && d <= 12) {
+    if (transitionStyle === "fade" && d >= -6 && d <= 8) {
+      // Soft fade — peak opacity 0.35 instead of 0.92 so the cut feels
+      // like a brief darken-then-reveal, not a fade-to-black-and-back.
+      // Modern short-form viewers read full-black as "dead frame" and
+      // bounce; a subtle dim is enough to mark the boundary.
       const opacity =
         d < 0
-          ? interpolate(d, [-8, 0], [0, 0.92], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
-          : interpolate(d, [0, 12], [0.92, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
+          ? interpolate(d, [-6, 0], [0, 0.35], { extrapolateLeft: "clamp", extrapolateRight: "clamp" })
+          : interpolate(d, [0, 8], [0.35, 0], { extrapolateLeft: "clamp", extrapolateRight: "clamp" });
       return (
         <div
           style={{
@@ -182,24 +186,37 @@ function GlobalTransitionLayer({
       );
     }
 
-    // Wipe: black bar slides from right to left, revealing incoming scene
-    if (transitionStyle === "wipe" && d >= 0 && d <= 18) {
-      const progress = interpolate(d, [0, 18], [0, 1], {
+    // Wipe: a thin accent stripe sweeps right-to-left across the frame
+    // instead of a full black bar. The old version showed half the frame
+    // as solid black mid-transition, which read as a "dead frame" black
+    // flash on short-form players.
+    if (transitionStyle === "wipe" && d >= 0 && d <= 14) {
+      const progress = interpolate(d, [0, 14], [0, 1], {
         easing: Easing.inOut(Easing.cubic),
         extrapolateRight: "clamp",
       });
-      const clipRight = interpolate(progress, [0, 1], [100, 0]);
+      const stripeLeft = interpolate(progress, [0, 1], [100, -10]);
       return (
         <div
           style={{
             position: "absolute",
             inset: 0,
-            background: "black",
-            clipPath: `inset(0 ${clipRight}% 0 0)`,
             zIndex: 50,
             pointerEvents: "none",
+            overflow: "hidden",
           }}
-        />
+        >
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              bottom: 0,
+              left: `${stripeLeft}%`,
+              width: "8%",
+              background: "linear-gradient(90deg, transparent, rgba(255,255,255,0.65), transparent)",
+            }}
+          />
+        </div>
       );
     }
   }
