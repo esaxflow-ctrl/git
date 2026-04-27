@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     wallet_refresh_interval_seconds: int = 3600
     tracker_poll_interval_seconds: int = 60
 
+    # On-chain discovery filters
+    wallet_discovery_max: int = 300            # cap on wallets to score per refresh
+    wallet_discovery_min_trades: int = 3       # min on-chain trades in last 500 blocks
+    wallet_score_concurrency: int = 8          # parallel API fetches during scoring
+
     # Alerts
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""

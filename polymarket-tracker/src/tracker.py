@@ -248,7 +248,14 @@ class Tracker:
 
         log.info("Fetched %d leaderboard entries", len(entries))
 
-        for entry in entries:
+        # Score wallets concurrently with a semaphore — most discovery results
+        # are noise, so keep concurrency moderate to stay under API rate limits.
+        sem = asyncio.Semaphore(settings.wallet_score_concurrency)
+        scored = 0
+        total = len(entries)
+
+        async def _score_one(entry: dict) -> None:
+            nonlocal scored
             address = (
                 entry.get("proxyWallet")
                 or entry.get("address")
@@ -256,12 +263,17 @@ class Tracker:
                 or ""
             ).lower()
             if not address or len(address) < 10:
-                continue
+                return
+            async with sem:
+                await self._upsert_wallet(address, entry)
+            scored += 1
+            if scored % 25 == 0:
+                log.info("Scored %d/%d wallets…", scored, total)
 
-            await self._upsert_wallet(address, entry)
+        await asyncio.gather(*(_score_one(e) for e in entries), return_exceptions=True)
 
         self._last_wallet_refresh = datetime.now(timezone.utc)
-        log.info("Wallet refresh complete")
+        log.info("Wallet refresh complete (%d/%d scored)", scored, total)
 
     async def _discover_wallets_from_markets(self) -> list[dict]:
         """Discover active Polymarket traders from on-chain logs.
@@ -283,15 +295,15 @@ class Tracker:
         ]
 
         def _addrs_from_logs(logs: list) -> list[str]:
-            """Extract zero-padded Ethereum address topics → lower-case addresses."""
-            out, seen = [], set()
+            """Extract zero-padded Ethereum address topics. Returns ALL occurrences
+            so callers can count frequency."""
+            out = []
             for entry in logs:
                 for topic in entry.get("topics", [])[1:]:
                     if (isinstance(topic, str) and len(topic) == 66
                             and topic.startswith("0x000000000000000000000000")):
                         addr = ("0x" + topic[26:]).lower()
-                        if addr not in seen and addr != "0x" + "0" * 40:
-                            seen.add(addr)
+                        if addr != "0x" + "0" * 40:
                             out.append(addr)
             return out
 
@@ -303,13 +315,14 @@ class Tracker:
             ) as resp:
                 return await resp.json()
 
-        seen: set[str] = set()
-        entries: list[dict] = []
+        from collections import Counter
+        addr_counts: Counter = Counter()
         latest_block = 0
 
         async with _aiohttp.ClientSession() as session:
 
             # ── Phase 1: direct JSON-RPC ──────────────────────────────────────
+            phase1_done = False
             for rpc_url in RPC_ENDPOINTS:
                 try:
                     bn = await _rpc(session, rpc_url, "eth_blockNumber", [])
@@ -318,7 +331,6 @@ class Tracker:
                         continue
                     latest_block = int(bn["result"], 16)
 
-                    # Verify the contract actually has code (catches wrong address early)
                     code = (await _rpc(session, rpc_url, "eth_getCode",
                                        [CONTRACTS[0], "latest"])).get("result", "0x")
                     if not code or code == "0x":
@@ -329,7 +341,6 @@ class Tracker:
                     log.info("Polygon RPC %s block=%d contract=OK, scanning last 500 blocks…",
                              rpc_url, latest_block)
                     total_raw = 0
-                    # 50-block chunks to stay under free-RPC log-size limits
                     for chunk_start in range(latest_block - 500, latest_block, 50):
                         chunk_end = min(chunk_start + 49, latest_block)
                         for contract in CONTRACTS:
@@ -347,66 +358,74 @@ class Tracker:
                             if not isinstance(raw, list):
                                 continue
                             total_raw += len(raw)
-                            for addr in _addrs_from_logs(raw):
-                                if addr not in seen:
-                                    seen.add(addr)
-                                    entries.append({"address": addr})
+                            addr_counts.update(_addrs_from_logs(raw))
 
-                    log.info("RPC discovery %s: %d raw logs → %d addresses",
-                             rpc_url, total_raw, len(entries))
-                    if entries:
-                        return entries
+                    log.info("RPC discovery %s: %d raw logs → %d unique addresses",
+                             rpc_url, total_raw, len(addr_counts))
+                    if addr_counts:
+                        phase1_done = True
+                        break
 
                 except Exception as exc:
                     log.warning("Polygon RPC %s: %s", rpc_url, exc)
 
             # ── Phase 2: Polygonscan fallback ─────────────────────────────────
-            log.info("Direct RPC returned 0 — trying Polygonscan API…")
-            scan_key = getattr(settings, "polygonscan_api_key", "")
-            from_block = max(0, latest_block - 2000) if latest_block else 0
+            if not phase1_done:
+                log.info("Direct RPC returned 0 — trying Polygonscan API…")
+                scan_key = getattr(settings, "polygonscan_api_key", "")
+                from_block = max(0, latest_block - 2000) if latest_block else 0
 
-            for contract in CONTRACTS:
-                try:
-                    params: dict = {
-                        "module": "logs", "action": "getLogs",
-                        "address": contract,
-                        "fromBlock": from_block,
-                        "toBlock": "latest",
-                        "page": 1, "offset": 1000,
-                    }
-                    if scan_key:
-                        params["apikey"] = scan_key
-                    async with session.get(
-                        "https://api.polygonscan.com/api",
-                        params=params,
-                        timeout=_aiohttp.ClientTimeout(total=30),
-                    ) as resp:
-                        data = await resp.json()
+                for contract in CONTRACTS:
+                    try:
+                        params: dict = {
+                            "module": "logs", "action": "getLogs",
+                            "address": contract,
+                            "fromBlock": from_block,
+                            "toBlock": "latest",
+                            "page": 1, "offset": 1000,
+                        }
+                        if scan_key:
+                            params["apikey"] = scan_key
+                        async with session.get(
+                            "https://api.polygonscan.com/api",
+                            params=params,
+                            timeout=_aiohttp.ClientTimeout(total=30),
+                        ) as resp:
+                            data = await resp.json()
 
-                    if data.get("status") == "1" and isinstance(data.get("result"), list):
-                        raw = data["result"]
-                        log.info("Polygonscan %s: %d logs", contract[:12], len(raw))
-                        for addr in _addrs_from_logs(raw):
-                            if addr not in seen:
-                                seen.add(addr)
-                                entries.append({"address": addr})
-                    else:
-                        log.warning("Polygonscan %s: status=%s msg=%s",
-                                    contract[:12], data.get("status"), data.get("message"))
+                        if data.get("status") == "1" and isinstance(data.get("result"), list):
+                            raw = data["result"]
+                            log.info("Polygonscan %s: %d logs", contract[:12], len(raw))
+                            addr_counts.update(_addrs_from_logs(raw))
+                        else:
+                            log.warning("Polygonscan %s: status=%s msg=%s",
+                                        contract[:12], data.get("status"), data.get("message"))
 
-                    if not scan_key:
-                        await asyncio.sleep(5)  # 1/5s without API key
+                        if not scan_key:
+                            await asyncio.sleep(5)
 
-                except Exception as exc:
-                    log.warning("Polygonscan %s: %s", contract[:12], exc)
+                    except Exception as exc:
+                        log.warning("Polygonscan %s: %s", contract[:12], exc)
 
-        if not entries:
+        # Rank by trading frequency and cap to top N — filters out one-off touches,
+        # bots, and addresses that are actually order hashes that happened to look
+        # like zero-padded addresses.
+        cap = settings.wallet_discovery_max
+        min_count = settings.wallet_discovery_min_trades
+        ranked = [(a, n) for a, n in addr_counts.most_common() if n >= min_count][:cap]
+
+        if not ranked:
             log.warning(
-                "All discovery methods returned 0 addresses. "
-                "Add POLYGONSCAN_API_KEY to .env for more reliable discovery, or seed manually: "
-                "python main.py add-wallet <address from polymarket.com/profile/0x...>"
+                "Discovery returned %d unique addresses but none with ≥%d trades. "
+                "Lower WALLET_DISCOVERY_MIN_TRADES or seed manually with: "
+                "python main.py add-wallet <address>", len(addr_counts), min_count,
             )
-        return entries
+            return []
+
+        log.info("Discovery: %d unique addresses → %d after frequency filter (≥%d trades, top %d)",
+                 len(addr_counts), len(ranked), min_count, cap)
+
+        return [{"address": a, "trade_count_500_blocks": n} for a, n in ranked]
 
     async def _upsert_wallet(self, address: str, leaderboard_entry: dict) -> None:
         """Fetch full wallet data, score it, and save to DB."""
