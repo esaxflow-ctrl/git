@@ -172,7 +172,10 @@ async function main(): Promise<void> {
         }
       }
     } catch (e) {
-      console.error(chalk.red('Loop error:'), e instanceof Error ? e.message : e);
+      const detail = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
+      console.error(chalk.red('Loop error:'), detail);
+      // Persist so the dashboard's screen-clear doesn't hide it.
+      db.insertRiskEvent({ kind: 'rpc_unstable', timestamp: Date.now(), detail: detail.slice(0, 2_000) });
     } finally {
       setTimeout(loop, tickIntervalMs);
     }

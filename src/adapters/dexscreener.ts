@@ -74,7 +74,7 @@ export class DexScreenerAdapter {
     const pairs = await this.getPairsByToken(address);
     const sol = pairs.filter((p) => p.chainId === 'solana');
     if (!sol.length) return null;
-    return sol.sort((a, b) => (b.liquidity.usd ?? 0) - (a.liquidity.usd ?? 0))[0] ?? null;
+    return sol.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0] ?? null;
   }
 
   async search(query: string): Promise<DsPair[]> {
