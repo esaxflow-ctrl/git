@@ -67,23 +67,29 @@ function buildScenePrompts(
   filledBody: string[],
   filledPayoff: string,
   filledCta: string,
-  topicNounValue: string
+  topicNounValue: string,
+  hookVisual: string,
+  setupVisual: string,
+  bodyVisuals: string[],
+  payoffVisual: string,
+  ctaVisual: string
 ): ScenePromptOutput[] {
-  // Each beat gets a scene prompt — a short visual brief the planner can
-  // expand into search terms. We default to literal+symbolic depictions
-  // related to the topic noun so the visual stays anchored.
-  const scenes: Array<{ narration: string; visualPrompt: string; backgroundType: string; estimatedSeconds: number }> = [];
+  // Per-beat visual hints curated in the template, so each scene's search
+  // term actually depicts the line being spoken instead of cycling a
+  // generic topic anchor.
+  const scenes: ScenePromptOutput[] = [];
   const beats = [filledHook, filledSetup, ...filledBody, filledPayoff, filledCta];
+  const visualHints = [hookVisual, setupVisual, ...bodyVisuals, payoffVisual, ctaVisual];
+
   beats.forEach((narration, i) => {
     const wordCount = narration.split(/\s+/).length;
     const estimatedSeconds = Math.max(2, Math.round((wordCount / 170) * 60));
+    const hint = visualHints[i] ?? topicNounValue;
     scenes.push({
       narration,
-      visualPrompt: i === 0
-        ? `cinematic close-up evoking ${topicNounValue}, dim moody lighting, shallow depth of field`
-        : i === beats.length - 1
-        ? `wide cinematic shot of decisive action related to ${topicNounValue}, warm directional light`
-        : `cinematic mid-shot related to ${topicNounValue}, neutral natural light, observational tone`,
+      // visualPrompt now carries the curated Pexels search term. The planner
+      // uses this directly when prebuilt scenes are passed through.
+      visualPrompt: hint,
       backgroundType: "stockImage",
       estimatedSeconds,
     });
@@ -117,7 +123,19 @@ export function fillTemplate(
 
   const points = body.length >= 3 ? body.slice(0, 3) : body;
 
-  const scenePrompts = buildScenePrompts(hook, setup, body, payoff, cta, ctx.topicNoun);
+  const scenePrompts = buildScenePrompts(
+    hook,
+    setup,
+    body,
+    payoff,
+    cta,
+    ctx.topicNoun,
+    template.hookVisual,
+    template.setupVisual,
+    template.bodyVisuals,
+    template.payoffVisual,
+    template.ctaVisual
+  );
   const captionLines = buildCaptionLines([hook, setup, ...body, payoff, cta]);
 
   const alternateHooks = template.alternateHooks

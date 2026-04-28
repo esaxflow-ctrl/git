@@ -61,33 +61,59 @@ const INITIAL: State = {
 export default function App() {
   const [state, setState] = useState<State>(INITIAL);
   const [prefilledScript, setPrefilledScript] = useState<string>("");
+  // Stash the per-beat visual hints from the script generator. When the user
+  // sends an unedited template script through the planner, we pass these
+  // hints so each scene's photo actually depicts the line being spoken.
+  const [scenePromptsFromScript, setScenePromptsFromScript] = useState<
+    Array<{ narration: string; visualPrompt: string }>
+  >([]);
+  const [scriptOriginal, setScriptOriginal] = useState<string>("");
   const sseCleanup = useRef<(() => void) | null>(null);
 
   function patch(partial: Partial<State>) {
     setState((s) => ({ ...s, ...partial }));
   }
 
-  const handleGenerate = useCallback(async (script: string, styleId: string) => {
-    patch({ step: "planning", script, styleId, error: null });
-    try {
-      const { scenes, warnings, provider } = await api.plan.generate({ script, styleId });
-      patch({
-        step: "editing",
-        scenes,
-        warnings,
-        planProvider: provider,
-        providerInfo: { planner: provider },
-        resolvedAssets: [],
-        audioResults: [],
-        visualsResolved: false,
-        audioSynthesized: false,
-        renderJobId: null,
-        renderStatus: null,
-      });
-    } catch (err) {
-      patch({ step: "idle", error: String(err) });
-    }
-  }, []);
+  const handleGenerate = useCallback(
+    async (script: string, styleId: string) => {
+      patch({ step: "planning", script, styleId, error: null });
+      try {
+        // If the user hasn't edited the template-emitted script, ship the
+        // curated per-beat visual hints to the planner. If they did edit,
+        // those hints no longer match line-for-line so we drop them.
+        const scriptUnchanged =
+          scriptOriginal !== "" && scriptOriginal.trim() === script.trim();
+        const prebuiltScenes = scriptUnchanged
+          ? scenePromptsFromScript.map((p) => ({
+              narration: p.narration,
+              visualHint: p.visualPrompt,
+            }))
+          : undefined;
+
+        const { scenes, warnings, provider } = await api.plan.generate({
+          script,
+          styleId,
+          prebuiltScenes,
+        });
+        patch({
+          step: "editing",
+          scenes,
+          warnings,
+          planProvider: provider,
+          providerInfo: { planner: provider },
+          resolvedAssets: [],
+          audioResults: [],
+          visualsResolved: false,
+          audioSynthesized: false,
+          renderJobId: null,
+          renderStatus: null,
+        });
+      } catch (err) {
+        patch({ step: "idle", error: String(err) });
+      }
+    },
+    [scriptOriginal, scenePromptsFromScript]
+  );
 
   const handleRegenerate = useCallback(() => {
     if (!state.script || !state.styleId) return;
@@ -219,7 +245,11 @@ export default function App() {
 
         {/* Script generator (LLM-driven 60s writer) */}
         <ScriptGeneratorPanel
-          onScriptReady={(s) => setPrefilledScript(s)}
+          onScriptReady={(payload) => {
+            setPrefilledScript(payload.script);
+            setScriptOriginal(payload.script);
+            setScenePromptsFromScript(payload.scenePrompts);
+          }}
         />
 
         <Divider />

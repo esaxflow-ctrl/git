@@ -1,8 +1,13 @@
 import { useState } from "react";
 import { api, ScriptGenerationResult } from "../api/client";
 
+export interface ScriptReadyPayload {
+  script: string;
+  scenePrompts: ScriptGenerationResult["generated"]["scenePrompts"];
+}
+
 interface Props {
-  onScriptReady: (script: string) => void;
+  onScriptReady: (payload: ScriptReadyPayload) => void;
 }
 
 const TONES = [
@@ -217,7 +222,12 @@ export function ScriptGeneratorPanel({ onScriptReady }: Props) {
           )}
 
           <button
-            onClick={() => onScriptReady(result.generated.script)}
+            onClick={() =>
+              onScriptReady({
+                script: result.generated.script,
+                scenePrompts: result.generated.scenePrompts,
+              })
+            }
             style={{
               padding: "8px 14px",
               background: "#3b82f6",

@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { PlanRequestSchema } from "../../lib/validation/schemas";
-import { generateScenes } from "../../lib/planner";
+import { generateScenes, buildScenesFromPrebuilt } from "../../lib/planner";
 import { getStyleProfile } from "../../lib/styleProfiles";
 import { validateScenePlan, detectVisualRepetition, pacingVarianceCheck } from "../../lib/validation/antiGeneric";
 import { planCache, planCacheKey } from "../../lib/cache";
@@ -14,7 +14,7 @@ planRouter.post("/", async (req, res) => {
     return;
   }
 
-  const { script, styleId, options } = parse.data;
+  const { script, styleId, options, prebuiltScenes } = parse.data;
 
   let style;
   try {
@@ -24,7 +24,13 @@ planRouter.post("/", async (req, res) => {
     return;
   }
 
-  const cacheKey = planCacheKey(script, styleId);
+  // Cache key includes prebuiltScenes signal so a re-run with the same
+  // script but no prebuilt hints doesn't return the prebuilt-derived
+  // result.
+  const cacheKey = planCacheKey(
+    script + (prebuiltScenes ? "::prebuilt" : ""),
+    styleId
+  );
   const cached = await planCache.get(cacheKey);
   if (cached) {
     const scenes = cached as ReturnType<typeof Array.prototype.map>;
@@ -44,13 +50,27 @@ planRouter.post("/", async (req, res) => {
       maxScenes: options?.maxScenes ?? 14,
     };
 
-    const { scenes, provider } = await generateScenes(script, planOptions);
+    let scenes: unknown[];
+    let provider: string;
 
-    const validation = validateScenePlan(scenes);
+    if (prebuiltScenes && prebuiltScenes.length > 0) {
+      // Template-emitted hints. Skip text re-derivation entirely.
+      console.info(
+        `[plan] Using ${prebuiltScenes.length} prebuilt scene hints from template`
+      );
+      scenes = buildScenesFromPrebuilt(prebuiltScenes, planOptions, script);
+      provider = "deterministic";
+    } else {
+      const result = await generateScenes(script, planOptions);
+      scenes = result.scenes;
+      provider = result.provider;
+    }
+
+    const validation = validateScenePlan(scenes as never);
     const warnings = [
       ...(validation.warnings ?? []),
-      ...detectVisualRepetition(scenes),
-      ...pacingVarianceCheck(scenes),
+      ...detectVisualRepetition(scenes as never),
+      ...pacingVarianceCheck(scenes as never),
     ];
 
     await planCache.set(cacheKey, scenes);

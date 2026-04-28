@@ -238,6 +238,17 @@ export type VoiceOptions = z.infer<typeof VoiceOptionsSchema>;
 
 // ─── API Contract Schemas ─────────────────────────────────────────────────────
 
+// When the script came straight from a template (no manual edits), the
+// frontend can pass the per-beat data the template emitted: each entry's
+// narration + Pexels-friendly visual hint. The planner uses these
+// directly so each scene's photo actually depicts the line being
+// spoken, instead of re-deriving search terms from the prose.
+export const PrebuiltSceneSchema = z.object({
+  narration: z.string(),
+  visualHint: z.string(),
+});
+export type PrebuiltScene = z.infer<typeof PrebuiltSceneSchema>;
+
 export const PlanRequestSchema = z.object({
   script: z.string().min(50).max(5000),
   styleId: z.string(),
@@ -248,6 +259,7 @@ export const PlanRequestSchema = z.object({
       maxScenes: z.number().optional(),
     })
     .optional(),
+  prebuiltScenes: z.array(PrebuiltSceneSchema).optional(),
 });
 export type PlanRequest = z.infer<typeof PlanRequestSchema>;
 
