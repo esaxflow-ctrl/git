@@ -221,12 +221,102 @@ async function main(): Promise<void> {
         } else if (signal.recommendation === 'PASS' || signal.recommendation === 'WATCH') {
           recordRejection(db, signal, snap, signal.reason);
         }
+      }
 
-        // Run the exit manager on any open positions for this token
-        for (const p of db.listOpenPositions()) {
-          if (p.token.address !== snap.address) continue;
-          await exits.tick(p, { snapshot: snap, liquidityDelta: delta });
+      // ---- Exit manager runs on EVERY open position each cycle, regardless
+      // of whether the token re-appeared in discovery. Held tokens that
+      // stop trending would otherwise be stuck forever (the time-based
+      // exit at 180 min wouldn't fire because the loop never reaches the
+      // exit tick). For tokens not in this cycle's discovery, we use the
+      // latest snapshot we have — for time-based / hard-stop / trailing
+      // logic, slightly stale prices are still actionable.
+      const openPositions = db.listOpenPositions();
+      for (const p of openPositions) {
+        const fresh = snapshots.find((s) => s.address === p.token.address);
+        let snap = fresh ?? db.getLatestSnapshot(p.token.address);
+        if (!snap) {
+          // No snapshot at all — try a quick DexScreener fetch so the
+          // exit manager has a price to reason about. Fail silently if
+          // even that doesn't work; time-based exit will still fire on
+          // a synthetic snapshot using the entry price.
+          try {
+            const pair = await dex.bestSolanaPair(p.token.address);
+            if (pair) {
+              snap = {
+                address: p.token.address,
+                symbol: p.token.symbol,
+                name: p.token.name,
+                pairAddress: pair.pairAddress,
+                dex: 'unknown',
+                liquidityUsd: pair.liquidity?.usd ?? 0,
+                marketCapUsd: pair.marketCap ?? 0,
+                fdvUsd: pair.fdv ?? 0,
+                priceUsd: Number(pair.priceUsd ?? 0),
+                priceChange5mPct: pair.priceChange?.m5 ?? 0,
+                priceChange1hPct: pair.priceChange?.h1 ?? 0,
+                priceChange24hPct: pair.priceChange?.h24 ?? 0,
+                volume5mUsd: pair.volume?.m5 ?? 0,
+                volume15mUsd: 0,
+                volume1hUsd: pair.volume?.h1 ?? 0,
+                volume24hUsd: pair.volume?.h24 ?? 0,
+                buyCount5m: pair.txns?.m5?.buys ?? 0,
+                sellCount5m: pair.txns?.m5?.sells ?? 0,
+                uniqueBuyers5m: pair.txns?.m5?.buys ?? 0,
+                uniqueSellers5m: pair.txns?.m5?.sells ?? 0,
+                tokenAgeMinutes: 0,
+                poolAgeMinutes: 0,
+                jupiterQuoteAvailable: true,
+                estPriceImpactPct: null,
+                estSlippageBps: null,
+                mintAuthorityActive: null,
+                freezeAuthorityActive: null,
+                top10HolderPct: null,
+                topSingleHolderPct: null,
+                fetchedAt: Date.now(),
+              };
+            }
+          } catch {
+            /* ignore — fallthrough to entry-price synthetic */
+          }
         }
+        if (!snap) {
+          // Last-resort synthetic snapshot using the entry price. The
+          // time-based exit only needs `now - entryTimestamp`, so this
+          // unblocks stuck positions even when all data sources are dark.
+          snap = {
+            address: p.token.address,
+            symbol: p.token.symbol,
+            name: p.token.name,
+            pairAddress: null,
+            dex: 'unknown',
+            liquidityUsd: 0,
+            marketCapUsd: 0,
+            fdvUsd: 0,
+            priceUsd: p.entryPriceUsd,
+            priceChange5mPct: 0,
+            priceChange1hPct: 0,
+            priceChange24hPct: 0,
+            volume5mUsd: 0,
+            volume15mUsd: 0,
+            volume1hUsd: 0,
+            volume24hUsd: 0,
+            buyCount5m: 0,
+            sellCount5m: 0,
+            uniqueBuyers5m: 0,
+            uniqueSellers5m: 0,
+            tokenAgeMinutes: 0,
+            poolAgeMinutes: 0,
+            jupiterQuoteAvailable: false,
+            estPriceImpactPct: null,
+            estSlippageBps: null,
+            mintAuthorityActive: null,
+            freezeAuthorityActive: null,
+            top10HolderPct: null,
+            topSingleHolderPct: null,
+            fetchedAt: Date.now(),
+          };
+        }
+        await exits.tick(p, { snapshot: snap });
       }
     } catch (e) {
       const detail = e instanceof Error ? `${e.message}\n${e.stack ?? ''}` : String(e);
