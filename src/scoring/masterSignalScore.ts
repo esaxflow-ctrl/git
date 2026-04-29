@@ -34,19 +34,21 @@ export interface MasterScoreInputs {
 }
 
 const WEIGHTS = {
-  tokenSafety: 0.18,
+  tokenSafety: 0.16,
   smartWallet: 0.10,
-  smartWalletCluster: 0.07,
-  buzz: 0.08,
-  event: 0.10,
-  pumpfun: 0.05,
-  migration: 0.05,
-  liquidityGrowth: 0.07,
+  smartWalletCluster: 0.10,
+  buzz: 0.06,
+  event: 0.08,
+  pumpfun: 0.04,
+  migration: 0.04,
+  liquidityGrowth: 0.06,
   volumeAcceleration: 0.10,
-  dexscreenerBoost: 0.03,
-  narrative: 0.04,
-  jupiterExecutionQuality: 0.08,
-  // tooLatePenalty subtracts up to 5 weighted points
+  dexscreenerBoost: 0.02,
+  narrative: 0.03,
+  jupiterExecutionQuality: 0.07,
+  sourceStack: 0.07,
+  freshness: 0.07,
+  // tooLatePenalty subtracts up to 25 absolute points
 };
 
 export function computeMasterSignal(input: MasterScoreInputs): MasterSignal {
@@ -78,6 +80,8 @@ export function computeMasterSignal(input: MasterScoreInputs): MasterSignal {
     { name: 'dexscreenerBoost', score: breakdown.dexscreenerBoost, weight: WEIGHTS.dexscreenerBoost },
     { name: 'narrative', score: breakdown.narrative, weight: WEIGHTS.narrative },
     { name: 'jupiterExecutionQuality', score: breakdown.jupiterExecutionQuality, weight: WEIGHTS.jupiterExecutionQuality },
+    { name: 'sourceStack', score: breakdown.sourceStack, weight: WEIGHTS.sourceStack },
+    { name: 'freshness', score: breakdown.freshness, weight: WEIGHTS.freshness },
   ];
 
   const active = components.filter((c) => c.score > 0);
@@ -103,6 +107,8 @@ export function computeMasterSignal(input: MasterScoreInputs): MasterSignal {
     { name: 'liquidity growth', score: breakdown.liquidityGrowth, threshold: 65 },
     { name: 'volume acceleration', score: breakdown.volumeAcceleration, threshold: 65 },
     { name: 'narrative', score: breakdown.narrative, threshold: cfg.NARRATIVE_SCORE_THRESHOLD },
+    { name: 'source stack', score: breakdown.sourceStack, threshold: 60 },
+    { name: 'freshness', score: breakdown.freshness, threshold: 65 },
   ];
   const passingSupports = supports.filter((s) => s.score >= s.threshold);
   const strongestConfirmations = [
@@ -177,6 +183,8 @@ export function emptyBreakdown(): ScoreBreakdown {
     dexscreenerBoost: 0,
     narrative: 0,
     jupiterExecutionQuality: 0,
+    sourceStack: 0,
+    freshness: 0,
     tooLatePenalty: 0,
     riskManagerApproved: false,
   };

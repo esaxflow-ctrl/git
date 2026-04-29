@@ -176,6 +176,10 @@ export interface ScoreBreakdown {
   dexscreenerBoost: number;
   narrative: number;
   jupiterExecutionQuality: number;
+  /** Multi-source confirmation (how the token surfaced). 0–100. */
+  sourceStack: number;
+  /** Pool-age freshness window. 0–100. */
+  freshness: number;
   tooLatePenalty: number;     // higher = more late
   riskManagerApproved: boolean;
 }

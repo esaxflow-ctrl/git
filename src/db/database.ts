@@ -135,6 +135,46 @@ export class Db {
       .run(w.address, w.label, w.score, w.notes ?? null, w.addedAt);
   }
 
+  /**
+   * Recent buys of `tokenAddress` by watched wallets within the last
+   * `windowSec` seconds. Returns the wallet record (with score/label) plus
+   * the time of the buy. Used to feed `smartWallet` and
+   * `smartWalletCluster` sub-scores into the master signal.
+   */
+  recentSmartWalletBuys(
+    tokenAddress: string,
+    windowSec = 60 * 60,
+    now: number = Date.now(),
+  ): Array<{ wallet: WatchedWallet; blockTime: number }> {
+    const since = now - windowSec * 1000;
+    const rows = this.db
+      .prepare(
+        `SELECT w.address, w.label, w.score, w.notes, w.added_at, t.block_time
+         FROM watched_wallets w
+         JOIN wallet_trades t ON t.wallet = w.address
+         WHERE t.token_address = ? AND t.side = 'buy' AND t.block_time >= ?
+         ORDER BY t.block_time DESC`,
+      )
+      .all(tokenAddress, since) as Array<{
+      address: string;
+      label: string;
+      score: number;
+      notes: string | null;
+      added_at: number;
+      block_time: number;
+    }>;
+    return rows.map((r) => ({
+      wallet: {
+        address: r.address,
+        label: r.label as WatchedWallet['label'],
+        score: r.score,
+        notes: r.notes ?? undefined,
+        addedAt: r.added_at,
+      },
+      blockTime: r.block_time,
+    }));
+  }
+
   listWatchedWallets(limit = 1000): WatchedWallet[] {
     const rows = this.db
       .prepare(`SELECT address, label, score, notes, added_at FROM watched_wallets ORDER BY score DESC LIMIT ?`)
@@ -328,6 +368,73 @@ export class Db {
       else break;
     }
     return streak;
+  }
+
+  /**
+   * Per-strategy expectancy summary for the given mode.
+   *
+   * Expectancy = avg PnL per trade (in SOL). Strategies with negative
+   * expectancy after >=10 trades should be paused. Surfaced in the
+   * dashboard so the user can see at a glance which signals win.
+   */
+  perStrategyExpectancy(
+    mode: 'paper' | 'live',
+  ): Array<{
+    strategy: string;
+    trades: number;
+    wins: number;
+    netPnlSol: number;
+    avgWinSol: number;
+    avgLossSol: number;
+    winRate: number;
+    expectancy: number;
+    profitFactor: number;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT strategy,
+                COUNT(*) as trades,
+                SUM(CASE WHEN realised_pnl_sol > 0 THEN 1 ELSE 0 END) as wins,
+                COALESCE(SUM(realised_pnl_sol), 0) as net,
+                COALESCE(SUM(CASE WHEN realised_pnl_sol > 0 THEN realised_pnl_sol ELSE 0 END), 0) as gross_wins,
+                COALESCE(SUM(CASE WHEN realised_pnl_sol < 0 THEN realised_pnl_sol ELSE 0 END), 0) as gross_losses
+         FROM closed_positions
+         WHERE mode = ?
+         GROUP BY strategy
+         ORDER BY net DESC`,
+      )
+      .all(mode) as Array<{
+      strategy: string;
+      trades: number;
+      wins: number;
+      net: number;
+      gross_wins: number;
+      gross_losses: number;
+    }>;
+    return rows.map((r) => {
+      const losses = Math.max(0, r.trades - r.wins);
+      const winRate = r.trades > 0 ? r.wins / r.trades : 0;
+      const avgWin = r.wins > 0 ? r.gross_wins / r.wins : 0;
+      const avgLoss = losses > 0 ? r.gross_losses / losses : 0; // negative
+      const expectancy = r.trades > 0 ? r.net / r.trades : 0;
+      const profitFactor =
+        Math.abs(r.gross_losses) > 0
+          ? r.gross_wins / Math.abs(r.gross_losses)
+          : r.gross_wins > 0
+            ? Infinity
+            : 0;
+      return {
+        strategy: r.strategy,
+        trades: r.trades,
+        wins: r.wins,
+        netPnlSol: r.net,
+        avgWinSol: avgWin,
+        avgLossSol: avgLoss,
+        winRate,
+        expectancy,
+        profitFactor,
+      };
+    });
   }
 
   lastLossTimestamp(mode: 'paper' | 'live'): number | null {

@@ -39,6 +39,8 @@ import { volumeAccelerationStrategy } from './strategies/volumeAccelerationStrat
 import { liquidityGrowthStrategy } from './strategies/liquidityGrowthStrategy.js';
 import { computeMasterSignal, emptyBreakdown } from './scoring/masterSignalScore.js';
 import { scoreTooLate } from './scoring/tooLateScore.js';
+import { scoreSmartWalletBuys } from './scoring/smartWalletSignal.js';
+import { scoreSourceStack, scoreFreshness } from './scoring/discoverySignals.js';
 import type { MasterSignal, RejectedTrade, TokenSnapshot } from './types.js';
 
 type Mode = 'scan' | 'paper' | 'live';
@@ -172,10 +174,18 @@ async function main(): Promise<void> {
     try {
       const discovered = await discoverMultiSource({ dex, birdeye, helius, jupiter });
       const snapshots = discovered.map((d) => d.snapshot);
+      const sourcesByMint = new Map(discovered.map((d) => [d.snapshot.address, d.sources]));
       for (const snap of snapshots) {
         db.insertTokenSnapshot(snap);
         const delta = liquidity.observe(snap);
-        const signal = await evaluate(snap, mode, { cfg, risk, db, jupiter, helius });
+        const signal = await evaluate(snap, mode, {
+          cfg,
+          risk,
+          db,
+          jupiter,
+          helius,
+          discoverySources: sourcesByMint.get(snap.address) ?? [],
+        });
         if (!signal) continue;
         db.insertCombinedSignal(signal);
 
@@ -223,70 +233,40 @@ async function main(): Promise<void> {
         }
       }
 
-      // ---- Exit manager runs on EVERY open position each cycle, regardless
-      // of whether the token re-appeared in discovery. Held tokens that
-      // stop trending would otherwise be stuck forever (the time-based
-      // exit at 180 min wouldn't fire because the loop never reaches the
-      // exit tick). For tokens not in this cycle's discovery, we use the
-      // latest snapshot we have — for time-based / hard-stop / trailing
-      // logic, slightly stale prices are still actionable.
+      // Exit-manager: tick every open position every loop. The previous
+      // version only fired when the held token reappeared in discovery,
+      // which meant a position whose token dropped off trending could
+      // never close. Now we always tick — preferring a fresh snapshot,
+      // falling back to a DexScreener fetch (via snapshotFromPair so the
+      // result is a real Jupiter-validated snapshot, not a fabricated
+      // one), then to the last cached snapshot, then to a synthetic
+      // entry-price snapshot for time-based exit.
       const openPositions = db.listOpenPositions();
       for (const p of openPositions) {
+        if (mode === 'live' && p.mode === 'paper') continue;
+        if (mode === 'paper' && p.mode === 'live') continue;
         const fresh = snapshots.find((s) => s.address === p.token.address);
-        let snap = fresh ?? db.getLatestSnapshot(p.token.address);
+        let snap = fresh ?? null;
         if (!snap) {
-          // No snapshot at all — try a quick DexScreener fetch so the
-          // exit manager has a price to reason about. Fail silently if
-          // even that doesn't work; time-based exit will still fire on
-          // a synthetic snapshot using the entry price.
           try {
             const pair = await dex.bestSolanaPair(p.token.address);
             if (pair) {
-              snap = {
-                address: p.token.address,
-                symbol: p.token.symbol,
-                name: p.token.name,
-                pairAddress: pair.pairAddress,
-                dex: 'unknown',
-                liquidityUsd: pair.liquidity?.usd ?? 0,
-                marketCapUsd: pair.marketCap ?? 0,
-                fdvUsd: pair.fdv ?? 0,
-                priceUsd: Number(pair.priceUsd ?? 0),
-                priceChange5mPct: pair.priceChange?.m5 ?? 0,
-                priceChange1hPct: pair.priceChange?.h1 ?? 0,
-                priceChange24hPct: pair.priceChange?.h24 ?? 0,
-                volume5mUsd: pair.volume?.m5 ?? 0,
-                volume15mUsd: 0,
-                volume1hUsd: pair.volume?.h1 ?? 0,
-                volume24hUsd: pair.volume?.h24 ?? 0,
-                buyCount5m: pair.txns?.m5?.buys ?? 0,
-                sellCount5m: pair.txns?.m5?.sells ?? 0,
-                uniqueBuyers5m: pair.txns?.m5?.buys ?? 0,
-                uniqueSellers5m: pair.txns?.m5?.sells ?? 0,
-                tokenAgeMinutes: 0,
-                poolAgeMinutes: 0,
-                jupiterQuoteAvailable: true,
-                estPriceImpactPct: null,
-                estSlippageBps: null,
-                mintAuthorityActive: null,
-                freezeAuthorityActive: null,
-                top10HolderPct: null,
-                topSingleHolderPct: null,
-                fetchedAt: Date.now(),
-              };
+              const { snapshotFromPair } = await import('./scanners/newTokenScanner.js');
+              snap = await snapshotFromPair({ dex, birdeye, helius, jupiter }, pair);
+              db.insertTokenSnapshot(snap);
             }
           } catch {
-            /* ignore — fallthrough to entry-price synthetic */
+            /* fall through to cached */
           }
         }
+        if (!snap) snap = db.getLatestSnapshot(p.token.address);
         if (!snap) {
-          // Last-resort synthetic snapshot using the entry price. The
-          // time-based exit only needs `now - entryTimestamp`, so this
-          // unblocks stuck positions even when all data sources are dark.
+          // Synthetic minimal snapshot using entry data — at least lets
+          // time-based exit close out a stale position.
           snap = {
             address: p.token.address,
             symbol: p.token.symbol,
-            name: p.token.name,
+            name: '',
             pairAddress: null,
             dex: 'unknown',
             liquidityUsd: 0,
@@ -336,6 +316,7 @@ interface EvalDeps {
   db: Db;
   jupiter: JupiterAdapter;
   helius: HeliusAdapter;
+  discoverySources: string[];
 }
 
 async function evaluate(
@@ -345,12 +326,20 @@ async function evaluate(
 ): Promise<MasterSignal | null> {
   const safety = scoreTokenSafety(deps.cfg, snap);
   deps.db.insertSafetyScore(snap.address, safety.score, safety.label, safety.reasons, snap.fetchedAt);
+
+  // Smart-wallet recent buys: any watched wallet that bought this token in
+  // the last hour. Wired into the master signal as smartWallet +
+  // smartWalletCluster sub-scores. Also passes the count to liquidityGrowth
+  // so it can boost a strategy signal that's already pointing the same way.
+  const recentBuys = deps.db.recentSmartWalletBuys(snap.address, 60 * 60);
+  const smart = scoreSmartWalletBuys(recentBuys);
+
   const va = volumeAccelerationStrategy({ cfg: deps.cfg, snapshot: snap });
   const lg = liquidityGrowthStrategy({
     cfg: deps.cfg,
     snapshot: snap,
     delta: null,
-    smartWalletEntries: 0,
+    smartWalletEntries: smart.count,
   });
 
   const tooLate = scoreTooLate({
@@ -361,28 +350,44 @@ async function evaluate(
     hoursSinceMcDoubled: null,
   });
 
+  const stack = scoreSourceStack(deps.discoverySources);
+  const fresh = scoreFreshness(snap.poolAgeMinutes);
+
   const breakdown = emptyBreakdown();
   breakdown.tokenSafety = safety.score;
+  breakdown.smartWallet = smart.smartWallet;
+  breakdown.smartWalletCluster = smart.smartWalletCluster;
   breakdown.volumeAcceleration = va.score;
   breakdown.liquidityGrowth = lg.score;
   breakdown.jupiterExecutionQuality = snap.jupiterQuoteAvailable
     ? Math.round(100 - Math.min(100, (snap.estPriceImpactPct ?? 0) * 10))
     : 0;
+  breakdown.sourceStack = stack.score;
+  breakdown.freshness = fresh.score;
   breakdown.tooLatePenalty = tooLate.penalty;
   breakdown.riskManagerApproved = true; // re-checked at trade time
+
+  // Strategy chooser: smart-wallet cluster wins when it's strong (it's a
+  // direct copy-trade signal), otherwise prefer whichever of volume / liq
+  // is hotter. EMERGENCY_EXIT from liquidity-drain still wins overall.
+  let strategy: MasterSignal['strategy'];
+  if (lg.recommendation === 'EMERGENCY_EXIT') {
+    strategy = 'liquidity_growth';
+  } else if (smart.smartWalletCluster >= 70 || smart.smartWallet >= 80) {
+    strategy = 'smart_wallet_cluster';
+  } else if (va.score >= lg.score) {
+    strategy = 'volume_acceleration';
+  } else {
+    strategy = 'liquidity_growth';
+  }
 
   const signal = computeMasterSignal({
     cfg: deps.cfg,
     token: { address: snap.address, symbol: snap.symbol, name: snap.name },
-    strategy:
-      lg.recommendation === 'EMERGENCY_EXIT'
-        ? 'liquidity_growth'
-        : va.score >= lg.score
-          ? 'volume_acceleration'
-          : 'liquidity_growth',
+    strategy,
     breakdown,
-    confirmations: [...va.confirmations, ...lg.confirmations],
-    risks: [...va.warnings, ...lg.warnings, ...tooLate.reasons],
+    confirmations: [...va.confirmations, ...lg.confirmations, ...stack.notes, ...fresh.notes, ...smart.notes],
+    risks: [...va.warnings, ...lg.warnings, ...tooLate.reasons, ...fresh.warnings],
   });
 
   if (mode === 'scan') return signal;

@@ -18,11 +18,17 @@
  * `pnpm wallet:add <addr> ELITE_COPYABLE 90`.
  *
  * Heuristics applied automatically:
- *   - Wallet that bought < 3 seconds after pool creation on any pool = SNIPER_BOT
- *   - Wallet with positive realised PnL across 2+ tokens, ≥0.5 SOL net = GOOD_BUT_RISKY (high)
- *   - Wallet with positive realised PnL across 3+ tokens = GOOD_BUT_RISKY
- *   - Wallet with negative net realised PnL across 3+ tokens = LOW_QUALITY
- *   - Wallet observed only buying (no sells) is NOT promoted — could be a bag-holder
+ *   - Wallet that bought < 3 seconds after pool creation on a *majority* of
+ *       its pools = SNIPER_BOT (was: any single pool — too aggressive,
+ *       smart wallets sometimes also snipe)
+ *   - Wallet with positive realised PnL across 2+ tokens, ≥0.5 SOL net
+ *       = GOOD_BUT_RISKY (initial promotion, score 60)
+ *   - Wallet with ≥5 tokens, ≥60% win rate, ≥2 SOL net realised
+ *       = ELITE_COPYABLE (auto, score 80)
+ *   - Wallet with negative net realised PnL across 3+ tokens after a
+ *       previous promotion = AUTO_DEMOTE to LOW_QUALITY
+ *   - Wallet observed only buying (no sells) is NOT promoted — could be
+ *       a bag-holder
  */
 
 import type { BirdeyeAdapter } from '../adapters/birdeye.js';
@@ -44,6 +50,8 @@ export interface DiscoveryStats {
   newSellsRecorded: number;
   walletsWithRealisedPnl: number;
   proposedWallets: number;
+  promotedToElite: number;
+  autoDemoted: number;
   skippedAlreadyExamined: number;
 }
 
@@ -53,6 +61,16 @@ const POOL_RE_EXAMINE_MS = 6 * 60 * 60_000; // re-examine same pool every 6h
 const MIN_TOKENS_FOR_PROPOSAL = 2;     // realised PnL across 2+ tokens is meaningful
 const SNIPER_THRESHOLD_SECONDS = 3;
 const MIN_NET_REALISED_SOL = 0.5;      // realised PnL must clear this to flag GOOD_BUT_RISKY
+
+// ELITE_COPYABLE auto-promotion thresholds. Stricter than GOOD_BUT_RISKY:
+// we only flip a wallet to ELITE when the track record is robust enough
+// that a single bad copy is unlikely to invalidate the decision.
+const ELITE_MIN_TOKENS = 5;
+const ELITE_MIN_NET_SOL = 2;
+const ELITE_MIN_WIN_RATE = 0.6;
+// Auto-demotion: a previously-promoted wallet that now shows negative net
+// realised PnL across N+ tokens gets dropped back to LOW_QUALITY.
+const DEMOTE_MIN_TOKENS = 3;
 
 export class WalletDiscovery {
   constructor(private readonly deps: WalletDiscoveryDeps) {}
@@ -64,6 +82,8 @@ export class WalletDiscovery {
       newSellsRecorded: 0,
       walletsWithRealisedPnl: 0,
       proposedWallets: 0,
+      promotedToElite: 0,
+      autoDemoted: 0,
       skippedAlreadyExamined: 0,
     };
 
@@ -196,6 +216,13 @@ export class WalletDiscovery {
     // 3. Propose wallets backed by realised PnL across multiple tokens.
     stats.proposedWallets = this.proposeFromRealisedPnl();
 
+    // 4. Auto-promote GOOD_BUT_RISKY wallets that have proven themselves on
+    //    a robust sample to ELITE_COPYABLE. Auto-demote previously-promoted
+    //    wallets whose track record has degraded.
+    const { promoted, demoted } = this.reEvaluateExistingWallets();
+    stats.promotedToElite = promoted;
+    stats.autoDemoted = demoted;
+
     return stats;
   }
 
@@ -275,6 +302,126 @@ export class WalletDiscovery {
       if (result.changes > 0) proposed++;
     }
     return proposed;
+  }
+
+  /**
+   * Re-score wallets we've already promoted. Two transitions matter:
+   *
+   *  - GOOD_BUT_RISKY -> ELITE_COPYABLE when realised PnL track record
+   *    crosses the ELITE thresholds (5+ tokens, ≥60% win rate, ≥2 SOL net).
+   *
+   *  - ELITE_COPYABLE / GOOD_BUT_RISKY -> LOW_QUALITY when realised PnL
+   *    has gone negative across 3+ tokens. Manual entries (the user added
+   *    via `pnpm wallet:add`) are detected by their `notes` field — we
+   *    leave those alone to avoid stomping the user's curation.
+   */
+  private reEvaluateExistingWallets(): { promoted: number; demoted: number } {
+    type Row = {
+      address: string;
+      label: string;
+      score: number;
+      notes: string | null;
+      tokens: number;
+      net_pnl_sol: number;
+      win_rate: number;
+      min_pool_age: number | null;
+      sniper_pools: number;
+    };
+    const rows = this.deps.db
+      .raw()
+      .prepare(
+        `SELECT w.address, w.label, w.score, w.notes,
+                COALESCE(s.tokens_with_realised, 0) as tokens,
+                COALESCE(s.net_realised_pnl_sol, 0) as net_pnl_sol,
+                COALESCE(s.win_rate, 0) as win_rate,
+                (SELECT MIN(pool_age_at_buy_seconds) FROM wallet_observations o WHERE o.wallet = w.address) as min_pool_age,
+                (SELECT COUNT(*) FROM wallet_observations o WHERE o.wallet = w.address AND o.pool_age_at_buy_seconds <= ?) as sniper_pools
+         FROM watched_wallets w
+         LEFT JOIN wallet_pnl_summary s ON s.wallet = w.address`,
+      )
+      .all(SNIPER_THRESHOLD_SECONDS) as Row[];
+
+    const update = this.deps.db
+      .raw()
+      .prepare(
+        `UPDATE watched_wallets SET label = ?, score = ?, notes = ? WHERE address = ?`,
+      );
+    let promoted = 0;
+    let demoted = 0;
+
+    for (const r of rows) {
+      // Skip wallets the user manually added — `decideLabelAndScoreRealised`
+      // produces notes that always start with a sign / sniper marker, so a
+      // notes string with something other than that pattern is a manual
+      // curation we shouldn't overwrite.
+      if (!r.notes || (!r.notes.includes('SOL realised') && !r.notes.includes('sniper'))) {
+        continue;
+      }
+
+      // Sniper detection: majority of observed pools entered <3s after pool
+      // creation. Demote regardless of PnL — even profitable snipers aren't
+      // copyable on a paper-bot timing budget.
+      const totalObs = this.deps.db
+        .raw()
+        .prepare(`SELECT COUNT(*) as c FROM wallet_observations WHERE wallet = ?`)
+        .get(r.address) as { c: number };
+      const isSniper = totalObs.c >= 3 && r.sniper_pools / totalObs.c >= 0.5;
+      if (isSniper && r.label !== 'SNIPER_BOT') {
+        update.run('SNIPER_BOT', 25, `auto: ${r.sniper_pools}/${totalObs.c} pools entered ≤${SNIPER_THRESHOLD_SECONDS}s — sniper`, r.address);
+        demoted++;
+        continue;
+      }
+
+      // MEV-bot detector. Per the OdinBot post-mortem: a wallet with very
+      // high win rate (>85%) on a meaningful sample is almost always a MEV
+      // / sandwich / arb bot rather than a discretionary trader. The PnL
+      // is structurally unreplicable for a copy follower — by the time we
+      // see the buy and fire our own, the opportunity is gone. Re-label
+      // as TOO_FAST_TO_COPY so it stops feeding the smart-wallet score.
+      if (r.tokens >= 10 && r.win_rate >= 0.85 && r.label !== 'TOO_FAST_TO_COPY') {
+        update.run(
+          'TOO_FAST_TO_COPY',
+          20,
+          `auto: ${(r.win_rate * 100).toFixed(0)}% win rate over ${r.tokens} tokens — MEV/arb pattern, structurally uncopyable`,
+          r.address,
+        );
+        demoted++;
+        continue;
+      }
+
+      const winRatePct = (r.win_rate * 100).toFixed(0);
+      const pnlStr = `${r.net_pnl_sol >= 0 ? '+' : ''}${r.net_pnl_sol.toFixed(3)} SOL realised across ${r.tokens} tokens (${winRatePct}% win rate)`;
+
+      // Demote: previously-promoted wallet now showing negative net PnL.
+      if (
+        (r.label === 'ELITE_COPYABLE' || r.label === 'GOOD_BUT_RISKY') &&
+        r.tokens >= DEMOTE_MIN_TOKENS &&
+        r.net_pnl_sol < 0
+      ) {
+        update.run('LOW_QUALITY', 30, `auto-demote: ${pnlStr}`, r.address);
+        demoted++;
+        continue;
+      }
+
+      // Promote GOOD_BUT_RISKY -> ELITE_COPYABLE.
+      if (
+        r.label === 'GOOD_BUT_RISKY' &&
+        r.tokens >= ELITE_MIN_TOKENS &&
+        r.net_pnl_sol >= ELITE_MIN_NET_SOL &&
+        r.win_rate >= ELITE_MIN_WIN_RATE
+      ) {
+        update.run(
+          'ELITE_COPYABLE',
+          80,
+          `auto-promote: ${pnlStr} — meets ELITE thresholds (≥${ELITE_MIN_TOKENS} tokens, ≥${ELITE_MIN_WIN_RATE * 100}% win, ≥${ELITE_MIN_NET_SOL} SOL net)`,
+          r.address,
+        );
+        promoted++;
+        continue;
+      }
+    }
+
+    return { promoted, demoted };
   }
 }
 

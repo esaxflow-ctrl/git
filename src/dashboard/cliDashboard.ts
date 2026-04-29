@@ -105,6 +105,27 @@ export class CliDashboard {
     }
     lines.push('');
 
+    // Per-strategy expectancy: which signals actually win, in SOL terms.
+    // Helps the user see at a glance whether to keep or pause a strategy.
+    lines.push(chalk.bold.underline('Per-strategy expectancy'));
+    const perStrat = this.db.perStrategyExpectancy(mode);
+    if (perStrat.length === 0) {
+      lines.push(`  ${chalk.dim('no closed trades yet')}`);
+    } else {
+      for (const s of perStrat) {
+        const expColored = s.expectancy >= 0
+          ? chalk.green(`E=${s.expectancy >= 0 ? '+' : ''}${s.expectancy.toFixed(4)}`)
+          : chalk.red(`E=${s.expectancy.toFixed(4)}`);
+        const pfStr = isFinite(s.profitFactor)
+          ? s.profitFactor.toFixed(2)
+          : 'inf';
+        lines.push(
+          `  ${s.strategy.padEnd(28)} n=${String(s.trades).padStart(3)} win=${(s.winRate * 100).toFixed(0)}%  ${expColored} SOL  net=${formatPnl(s.netPnlSol)} pf=${pfStr}`,
+        );
+      }
+    }
+    lines.push('');
+
     lines.push(chalk.bold.underline('Recent closed positions'));
     const closed = this.db
       .raw()
