@@ -1,0 +1,320 @@
+{
+  "project": "solana-meme-trading-bot",
+  "last_updated": "2026-04-29 (Phase 3 #1)",
+  "notes": [
+    "Status reflects whether the feature is wired end-to-end into the live paper pipeline (src/index.ts evaluate + loop), not just whether the module exists.",
+    "'unknown' = the module is wired but we have no real-world evidence yet.",
+    "'failing' = the module exists with passing unit tests, but is NOT wired into evaluate() so its score never reaches the master signal.",
+    "Current commit baseline: e8b784c (local, 1 ahead of origin).",
+    "Test baseline: 75/75 vitest passing; pnpm typecheck clean."
+  ],
+  "features": [
+    {
+      "id": "core-pipeline",
+      "description": "Discovery -> scoring -> strategy -> master signal -> risk gate -> paper trade -> exit manager runs end-to-end and produces enough trades to measure expectancy.",
+      "category": "core",
+      "verification_steps": [
+        "pnpm paper for >24h",
+        "Inspect closed_positions count and reason_closed distribution",
+        "Confirm dashboard per-strategy expectancy populated"
+      ],
+      "status": "failing",
+      "evidence": "User-reported: only ~3 paper trades produced in a multi-hour run with current thresholds; sample too small to measure expectancy. Bottleneck is signal coverage, not trade-decision quality."
+    },
+    {
+      "id": "discovery-multisource",
+      "description": "Combines DexScreener latest profiles, DexScreener boosts, Birdeye trending, pump.fun migrations into a deduped TokenSnapshot[] tagged with sources.",
+      "category": "discovery",
+      "verification_steps": [
+        "Run pnpm scan, watch logs for non-zero discovery counts across sources",
+        "Inspect token_snapshots table for variety in dex column"
+      ],
+      "status": "unknown",
+      "evidence": "Module exists at src/scanners/multiSourceDiscovery.ts; no integration test; per-source counts not logged. Worked at least once (3 paper trades implies discovery fired)."
+    },
+    {
+      "id": "scoring-token-safety",
+      "description": "0-100 token safety score with hard fails for missing Jupiter quote, low liquidity, active mint/freeze authority, top single holder >50%.",
+      "category": "scoring",
+      "verification_steps": [
+        "pnpm test src/tests/safetyScore.test.ts",
+        "Inspect token_safety_scores rows after a paper run"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/safetyScore.test.ts: 6/6 passing. Wired into evaluate() at index.ts."
+    },
+    {
+      "id": "scoring-volume-acceleration",
+      "description": "5m volume vs trailing-1h-avg ratio, buy/sell ratio, unique-buyer participation, wash-pattern penalty, vertical-move penalty.",
+      "category": "scoring",
+      "verification_steps": [
+        "Module wired in evaluate(); test coverage indirect via masterSignal tests"
+      ],
+      "status": "passing",
+      "evidence": "Module wired into evaluate(); src/tests/masterSignal.test.ts exercises it indirectly. Hard velocity gate added in earlier commit."
+    },
+    {
+      "id": "scoring-liquidity-growth",
+      "description": "Detects liquidity additions, drains (emergency exit), strong volume + buyer breadth, smart-wallet entry boost.",
+      "category": "scoring",
+      "verification_steps": [
+        "Module wired in evaluate(); EMERGENCY_EXIT branch routes through exit manager"
+      ],
+      "status": "passing",
+      "evidence": "Module wired into evaluate(); EMERGENCY_EXIT path validated through exit-manager tests."
+    },
+    {
+      "id": "scoring-smart-wallet",
+      "description": "Reads recent watched-wallet buys (1h window, 6h decay) and emits smartWallet + smartWalletCluster sub-scores. Cluster of independent ELITE buyers routes trade strategy to smart_wallet_cluster.",
+      "category": "scoring",
+      "verification_steps": [
+        "pnpm test src/tests/discoverySignals.test.ts",
+        "Run pnpm wallet:add <addr> ELITE_COPYABLE 90 then verify sub-scores fire"
+      ],
+      "status": "unknown",
+      "evidence": "Tests pass (13/13 in discoverySignals.test.ts including 6 smart-wallet tests). Wired into evaluate() in commit e8b784c. Not yet exercised in production because watched_wallets table is empty by default."
+    },
+    {
+      "id": "scoring-source-stack",
+      "description": "Multi-source confirmation score. ds_boost is now a NEGATIVE signal (-30) per research that boosted tokens average -48% returns.",
+      "category": "scoring",
+      "verification_steps": [
+        "pnpm test src/tests/discoverySignals.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/discoverySignals.test.ts: 4 source-stack tests passing. Wired into evaluate() in commit e8b784c."
+    },
+    {
+      "id": "scoring-freshness",
+      "description": "Pool-age window score: peak 1-15 min post-listing, decays to 0 past 12h. Research-backed window.",
+      "category": "scoring",
+      "verification_steps": [
+        "pnpm test src/tests/discoverySignals.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/discoverySignals.test.ts: 4 freshness tests passing. Wired into evaluate() in commit e8b784c."
+    },
+    {
+      "id": "scoring-too-late",
+      "description": "Penalty for tokens already exhausted: parabolic 1h moves, late-retail-only posters, smart-wallets selling.",
+      "category": "scoring",
+      "verification_steps": [
+        "pnpm test src/tests/tooLate.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/tooLate.test.ts: 2/2 passing. Wired into evaluate() at index.ts. Stricter penalties tuned in earlier commit."
+    },
+    {
+      "id": "scoring-buzz",
+      "description": "X / social buzz score from cashtags, mention velocity, account credibility.",
+      "category": "scoring",
+      "verification_steps": [
+        "Module exists at src/scoring/buzzScore.ts",
+        "Confirm wired into evaluate() — currently NOT wired"
+      ],
+      "status": "failing",
+      "evidence": "Module exists; src/tests/buzzScore.test.ts: 4/4 passing. NOT wired into src/index.ts evaluate() — breakdown.buzz is always 0. README claims it contributes to master signal."
+    },
+    {
+      "id": "scoring-event",
+      "description": "Verifies celebrity / political / brand / project launches against multi-source CA confirmation.",
+      "category": "scoring",
+      "verification_steps": [
+        "Module exists at src/scoring/eventScore.ts",
+        "Confirm wired into evaluate() — currently NOT wired"
+      ],
+      "status": "failing",
+      "evidence": "Module exists; src/tests/eventScore.test.ts: 4/4 passing. NOT wired into evaluate() — breakdown.event is always 0."
+    },
+    {
+      "id": "scoring-narrative",
+      "description": "Active narrative tracker (political, animal, AI, sports, etc.) used as supporting confirmation.",
+      "category": "scoring",
+      "verification_steps": [
+        "Module exists; confirm wired into evaluate() — currently NOT wired"
+      ],
+      "status": "unknown",
+      "evidence": "Module file exists. NOT wired into evaluate(). No dedicated unit test located in the test suite. Need to inspect narrativeScore.ts contents during Phase 3."
+    },
+    {
+      "id": "scoring-pumpfun",
+      "description": "Pump.fun bonding-curve strategy: tracks curve progress, deployer reputation, organic buyer growth.",
+      "category": "strategy",
+      "verification_steps": [
+        "Module exists at src/strategies/pumpfunBondingCurveStrategy (or similar)",
+        "Confirm wired into evaluate() — currently NOT wired"
+      ],
+      "status": "failing",
+      "evidence": "Module exists; not wired into evaluate(). breakdown.pumpfun is always 0. Live launchpad trading is doubly gated (ENABLE_LIVE_LAUNCHPAD_TRADING=false default)."
+    },
+    {
+      "id": "scoring-migration",
+      "description": "Tokens graduating to Raydium / PumpSwap with new Jupiter route + post-migration volume confirmation.",
+      "category": "strategy",
+      "verification_steps": [
+        "pnpm typecheck",
+        "pnpm test",
+        "Run pnpm paper, observe a migration-sourced token, and confirm breakdown.migration is non-zero in combined_signals"
+      ],
+      "status": "unknown",
+      "evidence": "Wired into src/index.ts evaluate() in Phase 3 #1. Conditionally fires only when discoverySources includes 'migration', so non-migration tokens are unaffected. Test baseline: pnpm test 75/75 passing; pnpm typecheck clean. Production evidence (a non-zero breakdown.migration row in combined_signals) pending a paper run that surfaces a migration token."
+    },
+    {
+      "id": "master-signal",
+      "description": "Weighted average of active sub-scores normalized over present components, with too-late penalty subtracted, plus recommendation logic (PASS / WATCH / PAPER_BUY / LIVE_BUY_ALLOWED).",
+      "category": "scoring",
+      "verification_steps": [
+        "pnpm test src/tests/masterSignal.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/masterSignal.test.ts: 4/4 passing. Recommendation logic gates LIVE_BUY_ALLOWED behind passingSupports>=2 + active.length>=4. Paper-buy gate is master >= LIVE_BUY_THRESHOLD-10 + active.length>=3."
+    },
+    {
+      "id": "risk-manager",
+      "description": "Pre-trade approval gate: safety floor, daily-loss limit, consecutive-loss cooldown, wallet-reserve check, max-open positions, kill-switch state.",
+      "category": "risk",
+      "verification_steps": [
+        "pnpm test src/tests/riskManager.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/riskManager.test.ts: 7/7 passing. Wired into evaluate() final approval step."
+    },
+    {
+      "id": "kill-switch",
+      "description": "STOP_BOT.txt presence halts new entries.",
+      "category": "risk",
+      "verification_steps": [
+        "pnpm test src/tests/killSwitch.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/killSwitch.test.ts: 2/2 passing. Surfaced in dashboard."
+    },
+    {
+      "id": "execution-paper",
+      "description": "Paper trader: simulates entries/exits using Jupiter quotes, books PnL in SOL.",
+      "category": "execution",
+      "verification_steps": [
+        "pnpm test src/tests/paperTrader.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/paperTrader.test.ts: 3/3 passing. Wired into main loop. User has observed real paper trades in earlier session."
+    },
+    {
+      "id": "execution-live",
+      "description": "Live trader via JupiterExecutor — real Solana transactions when LIVE_TRADING=true and PAPER_TRADING=false.",
+      "category": "execution",
+      "verification_steps": [
+        "End-to-end review of liveTrader.ts and jupiterExecutor.ts",
+        "Test on devnet with throwaway keypair"
+      ],
+      "status": "unknown",
+      "evidence": "Module exists; gated by liveModeEnabled. Never executed in this user's environment. README explicitly flags it as needing review before real-money use."
+    },
+    {
+      "id": "execution-exit-manager",
+      "description": "Hard stop, profit ladder, trailing stop, time-based exit, liquidity-drain emergency, smart-wallet-sell exit, buzz collapse, fake-contract risk.",
+      "category": "execution",
+      "verification_steps": [
+        "pnpm test src/tests/exitManager.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/exitManager.test.ts: 6/6 passing. Bug fixed in commit e8b784c so the manager ticks every open position every loop, not only when token reappears in discovery."
+    },
+    {
+      "id": "wallet-scanner",
+      "description": "Polls watched_wallets every 60s for swap activity; emits buy signals into wallet_trades.",
+      "category": "wallet-tracking",
+      "verification_steps": [
+        "Populate watched_wallets and run pnpm paper",
+        "Inspect wallet_trades for incoming rows"
+      ],
+      "status": "unknown",
+      "evidence": "Module exists at src/scanners/walletScanner.ts. Gated by ENABLE_SMART_WALLET_TRACKING. Not exercised because watched_wallets is empty in user's DB. Buys now feed scoring-smart-wallet."
+    },
+    {
+      "id": "wallet-discovery",
+      "description": "Examines pools of trending tokens, extracts buys+sells, computes realised PnL per (wallet, token), proposes wallets with positive realised PnL across multiple tokens.",
+      "category": "wallet-tracking",
+      "verification_steps": [
+        "pnpm test src/tests/walletDiscovery.test.ts",
+        "Run pnpm wallet:discover and inspect proposed wallets"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/walletDiscovery.test.ts: 2/2 passing. Module exists at src/scanners/walletDiscovery.ts. Auto-promotion (GOOD_BUT_RISKY -> ELITE_COPYABLE) and auto-demotion (negative PnL or MEV-bot pattern) added in commit e8b784c. Real-world auto-promotions: 0 observed yet."
+    },
+    {
+      "id": "wallet-cli",
+      "description": "pnpm wallet:list / list:proposed / add / remove / discover commands.",
+      "category": "wallet-tracking",
+      "verification_steps": [
+        "Run pnpm wallet:list",
+        "Run pnpm wallet:add <addr> <label> <score>"
+      ],
+      "status": "unknown",
+      "evidence": "Module exists at src/cli/wallets.ts. No dedicated unit test. User has not exercised these commands in current session."
+    },
+    {
+      "id": "dashboard",
+      "description": "CLI dashboard showing mode, wallet, RPC latency, open positions, daily PnL, top wallets, latest discovered, latest rejected, per-strategy expectancy, recent closed.",
+      "category": "ux",
+      "verification_steps": [
+        "Run pnpm paper and observe dashboard output"
+      ],
+      "status": "unknown",
+      "evidence": "Module exists; per-strategy expectancy section added in commit e8b784c. User has observed earlier versions; not confirmed working with new section yet."
+    },
+    {
+      "id": "backtester",
+      "description": "Replays historical token snapshots through the strategies for threshold tuning.",
+      "category": "evaluation",
+      "verification_steps": [
+        "pnpm backtest",
+        "Inspect output for non-zero trade count and per-strategy stats"
+      ],
+      "status": "unknown",
+      "evidence": "Module exists at src/backtest/backtester.ts. Recent commits added new fields to ScoreBreakdown (sourceStack, freshness); backtester compatibility with these is unverified."
+    },
+    {
+      "id": "per-strategy-expectancy",
+      "description": "Aggregates closed_positions by strategy and computes win-rate, expectancy, profit factor; surfaces in dashboard.",
+      "category": "evaluation",
+      "verification_steps": [
+        "Run pnpm paper after >=1 closed position; inspect dashboard 'Per-strategy expectancy' section"
+      ],
+      "status": "unknown",
+      "evidence": "DB helper added in commit e8b784c (database.ts perStrategyExpectancy). Dashboard section added. No closed positions in current run to populate it."
+    },
+    {
+      "id": "kill-switch-file",
+      "description": "STOP_BOT.txt halts new entries.",
+      "category": "risk",
+      "verification_steps": [
+        "Drop STOP_BOT.txt into project root",
+        "Confirm dashboard shows 'ENGAGED' and no new trades open"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/killSwitch.test.ts: 2/2 passing. Mechanism well-tested."
+    },
+    {
+      "id": "rejection-trail",
+      "description": "Every rejected token writes a row to rejected_trades with token addr, symbol, strategy, timestamp, reason, score breakdown, raw signal.",
+      "category": "transparency",
+      "verification_steps": [
+        "Inspect rejected_trades table after a paper run",
+        "Confirm reasons are human-readable"
+      ],
+      "status": "unknown",
+      "evidence": "Schema and insert logic exist (database.ts insertRejectedTrade, dashboard renders latest rejections). Not yet inspected with current commit's data."
+    },
+    {
+      "id": "config-invariants",
+      "description": "Refuses to start with LIVE_TRADING=true AND PAPER_TRADING=true; refuses --mode=live unless liveModeEnabled.",
+      "category": "safety",
+      "verification_steps": [
+        "pnpm test src/tests/config.test.ts"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/config.test.ts: 8/8 passing. Documented in src/config.ts loadConfig invariants."
+    }
+  ]
+}

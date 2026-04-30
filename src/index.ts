@@ -41,6 +41,7 @@ import { computeMasterSignal, emptyBreakdown } from './scoring/masterSignalScore
 import { scoreTooLate } from './scoring/tooLateScore.js';
 import { scoreSmartWalletBuys } from './scoring/smartWalletSignal.js';
 import { scoreSourceStack, scoreFreshness } from './scoring/discoverySignals.js';
+import { migrationStrategy } from './strategies/migrationStrategy.js';
 import type { MasterSignal, RejectedTrade, TokenSnapshot } from './types.js';
 
 type Mode = 'scan' | 'paper' | 'live';
@@ -353,6 +354,41 @@ async function evaluate(
   const stack = scoreSourceStack(deps.discoverySources);
   const fresh = scoreFreshness(snap.poolAgeMinutes);
 
+  // Migration sub-score: fires when discovery surfaced this token via the
+  // migration scanner (a token that just graduated from a bonding-curve
+  // launchpad to a real DEX). The strategy already has unit-test coverage;
+  // the inputs it needs that aren't yet wired into the bot (buzz) default
+  // to neutral, so this is purely a wiring change — the strategy never
+  // sees stale data when migration didn't surface the token.
+  let migrationScore: number | null = null;
+  let migrationConfirmations: string[] = [];
+  let migrationWarnings: string[] = [];
+  if (deps.discoverySources.includes('migration')) {
+    // Heuristic proxies for the strategy's optional inputs:
+    //   preMigrationOrganic: high unique-buyers-to-tx ratio in 5m window
+    //   alreadyExhausted:    >100% price move in last hour
+    const totalTx5m = snap.buyCount5m + snap.sellCount5m;
+    const preMigrationOrganic =
+      totalTx5m > 0 && snap.uniqueBuyers5m >= 5 && snap.uniqueBuyers5m / totalTx5m >= 0.5;
+    const alreadyExhausted = snap.priceChange1hPct > 100;
+    const m = migrationStrategy({
+      cfg: deps.cfg,
+      candidate: {
+        snapshot: snap,
+        fromVenue: 'pump_fun_curve',
+        toVenue: snap.dex,
+        migrationDetectedAt: snap.fetchedAt,
+      },
+      buzzScore: 0,           // buzz module not wired yet
+      smartWalletEntries: smart.count,
+      preMigrationOrganic,
+      alreadyExhausted,
+    });
+    migrationScore = m.score;
+    migrationConfirmations = m.confirmations;
+    migrationWarnings = m.warnings;
+  }
+
   const breakdown = emptyBreakdown();
   breakdown.tokenSafety = safety.score;
   breakdown.smartWallet = smart.smartWallet;
@@ -364,6 +400,7 @@ async function evaluate(
     : 0;
   breakdown.sourceStack = stack.score;
   breakdown.freshness = fresh.score;
+  if (migrationScore !== null) breakdown.migration = migrationScore;
   breakdown.tooLatePenalty = tooLate.penalty;
   breakdown.riskManagerApproved = true; // re-checked at trade time
 
@@ -386,8 +423,8 @@ async function evaluate(
     token: { address: snap.address, symbol: snap.symbol, name: snap.name },
     strategy,
     breakdown,
-    confirmations: [...va.confirmations, ...lg.confirmations, ...stack.notes, ...fresh.notes, ...smart.notes],
-    risks: [...va.warnings, ...lg.warnings, ...tooLate.reasons, ...fresh.warnings],
+    confirmations: [...va.confirmations, ...lg.confirmations, ...stack.notes, ...fresh.notes, ...smart.notes, ...migrationConfirmations],
+    risks: [...va.warnings, ...lg.warnings, ...tooLate.reasons, ...fresh.warnings, ...migrationWarnings],
   });
 
   if (mode === 'scan') return signal;
