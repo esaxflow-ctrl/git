@@ -92,6 +92,51 @@ SELECT symbol, strategy, rejection_reason,
   FROM rejected_trades ORDER BY ts DESC LIMIT 20;
 ```
 
+## Seeding `x_accounts` for event scoring
+
+`NewsScanner` ingests posts from a curated set of X handles into the `news_events` table, which `eventScore` then reads in `evaluate()`. The seed list is **deliberately empty** in the default install — auto-seeding production data would silently bias the bot toward whoever the seeder trusted.
+
+### Activation gates
+
+NewsScanner activates at boot only when **all three** hold:
+1. `cfg.ENABLE_NEWS_EVENTS` is true (config default)
+2. `X_BEARER_TOKEN` is set in `.env` (paid X tier strongly recommended; free tier hits monthly read limits fast)
+3. The `x_accounts` table has at least one row
+
+If any gate fails, the bot logs `NewsScanner inactive: <reasons>. Seed curated accounts to enable event scoring.` at boot and never starts the polling interval — zero CPU/quota cost.
+
+### Manual seed (recommended)
+
+Pick handles you trust. For each one, run a one-liner against the SQLite DB:
+
+```bash
+sqlite3 data/bot.sqlite "INSERT INTO x_accounts(account_id, handle, category, credibility, notes, added_at) VALUES('any-id', 'official_handle_no_at', 'official_project', 90, 'why you trust this account', $(date +%s%3N));"
+```
+
+Field meanings:
+- `account_id` — any unique string; X numeric ID is ideal but optional.
+- `handle` — without the `@`. Used directly in `from:<handle>` queries.
+- `category` — one of `official_project`, `founder`, `news_outlet`, `analyst`. Free-form string, used for downstream filtering.
+- `credibility` — 0–100. Drives the `sourceCredibility` slot in `eventScore`. **Be conservative.** 90+ should be reserved for accounts you'd risk real SOL on.
+- `notes` — your own free-text rationale. Future-you will thank you.
+
+Restart the bot after seeding — gates are evaluated at boot.
+
+### Listing / removing
+
+```bash
+sqlite3 data/bot.sqlite "SELECT handle, category, credibility, notes FROM x_accounts;"
+sqlite3 data/bot.sqlite "DELETE FROM x_accounts WHERE handle='bad_handle';"
+```
+
+### Polling cadence
+
+Default is 30 minutes (`newsPollIntervalMs` in `src/index.ts`). Each tick issues one `searchRecent` call per seeded account. With X free tier (~100 reads/month) even 30-min polling exhausts the quota with 5 seeded accounts in days. Recommendation: paid X tier, or seed only 1–2 highly-credible accounts.
+
+### What gets persisted
+
+Only candidates whose CA is independently confirmed on **at least one** of DexScreener or Birdeye are persisted to `news_events`. Posts mentioning a CA that neither aggregator knows about are dropped (likely fake-CA scam tweets).
+
 ## Safety Rules
 
 Do not modify without explicit user approval:

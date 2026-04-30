@@ -78,6 +78,27 @@ Track important project decisions so future Claude sessions do not repeat debate
 - Tradeoff: `breakdown.event` and `breakdown.migration` will read 0 until their respective scanners (`NewsScanner`, in-loop `migrationScanner` post-promotion) are enabled. Master score is unchanged for tokens those scanners don't surface.
 - Revisit if: We start fabricating event data for testing; we add another orphaned module under different shape than data-presence-gated.
 
+### Decision: NewsScanner inactive when seed is empty (no auto-seeding)
+- Date: 2026-04-29 (Phase 5)
+- Decision: NewsScanner activates at boot only when ALL of `cfg.ENABLE_NEWS_EVENTS`, `x.isConfigured()`, and `x_accounts.length > 0` hold. When inactive, the bot logs a yellow `NewsScanner inactive: <reasons>...` warning and **does not** start the polling interval. The bot ships with **zero seed handles** in `x_accounts` — seeding is a deliberate user action documented in `RUNBOOK.md`.
+- Reason: The seed list directly determines whose posts the bot trusts as official launch signals. Auto-seeding would either bake an opinionated list of "credible" handles into the codebase (credibility is regime-dependent and the maintainer's blind spots become every user's blind spots), or pull a third-party "trusted accounts" feed (supply-chain risk). The right call is to refuse to seed and surface the unseeded state loudly.
+- Tradeoff: Out-of-the-box, `breakdown.event` is always 0 — every user must manually decide who to trust before event scoring contributes. That's intended friction.
+- Revisit if: A trusted on-chain registry of verified-launcher handles emerges — at that point we could opt-in pull from it.
+
+### Decision: 30-minute polling default for NewsScanner
+- Date: 2026-04-29 (Phase 5)
+- Decision: `newsPollIntervalMs = 30 * 60_000`. One `searchRecent` call per seeded account per tick.
+- Reason: X free tier limits are aggressive (~100 reads/month). At 30-min polling, 5 seeded accounts × 48 ticks/day × 30 days = ~7200 reads — already over the free quota; lower intervals exhaust it in days. The 30-min default is the floor at which a paid-tier user gets a meaningful stream and a free-tier user can at least limp through small experiments before being throttled.
+- Tradeoff: Real-world catalyst latency between an X post and our reaction can be up to 30 minutes — too slow for first-mover advantage on viral launches, but acceptable for the bot's "garbage rejection" thesis where confirmation is the value, not speed.
+- Revisit if: User upgrades to paid X tier (then drop to ~5 min) OR we move to streaming (X filtered stream) instead of polling.
+
+### Decision: Drop NewsScanner candidates with no DexScreener/Birdeye confirmation
+- Date: 2026-04-29 (Phase 5)
+- Decision: `NewsScanner.persistConfirmedCandidates()` only persists candidates whose CA appears on at least one of DexScreener or Birdeye. Candidates failing both checks are silently dropped before reaching `news_events`.
+- Reason: A tweet mentioning a CA that no aggregator knows about is almost certainly a scam tweet (fake CA, deleted-pool CA, or pre-launch tease). Persisting these would inflate `news_events` with garbage and force the downstream `scoreEvent` module to re-discriminate at every read.
+- Tradeoff: Pre-aggregator-indexing posts are missed (a post about a brand-new launch in its first ~30 seconds before DexScreener picks it up). Acceptable — those entries are sniper territory that the bot's freshness-window logic explicitly de-emphasises.
+- Revisit if: We add a streaming aggregator faster than DexScreener — at that point use it as a third confirmation source.
+
 ### Decision: Helius free tier is the assumed RPC budget
 - Date: 2026-04-25
 - Decision: All adapters (Birdeye, Helius, DexScreener) are coded for free-tier rate limits with caches and rate-limited buckets. Wallet discovery polls top-15 trending pools every 6h to stay polite.

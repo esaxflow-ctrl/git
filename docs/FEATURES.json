@@ -1,12 +1,12 @@
 {
   "project": "solana-meme-trading-bot",
-  "last_updated": "2026-04-29 (Phase 4 #1: eventScore wired)",
+  "last_updated": "2026-04-29 (Phase 5: NewsScanner wired into main loop)",
   "notes": [
     "Status reflects whether the feature is wired end-to-end into the live paper pipeline (src/index.ts evaluate + loop), not just whether the module exists.",
     "'unknown' = the module is wired but we have no real-world evidence yet.",
     "'failing' = the module exists with passing unit tests, but is NOT wired into evaluate() so its score never reaches the master signal.",
-    "Current commit baseline: e8b784c (local, 1 ahead of origin).",
-    "Test baseline: 75/75 vitest passing; pnpm typecheck clean."
+    "Current commit baseline: 69307d4 (synced with origin) + Phase 5 wiring commit pending.",
+    "Test baseline: 86/86 vitest passing across 17 files; pnpm typecheck clean."
   ],
   "features": [
     {
@@ -122,11 +122,23 @@
       "verification_steps": [
         "pnpm typecheck",
         "pnpm test",
-        "Wire NewsScanner into the main loop (separate Phase) so news_events is populated",
-        "Run pnpm paper after wiring NewsScanner; confirm breakdown.event is non-zero in combined_signals when a relevant news event exists"
+        "Run pnpm paper after seeding x_accounts; confirm breakdown.event is non-zero in combined_signals when a relevant news event exists"
       ],
-      "status": "unknown",
-      "evidence": "Wired into src/index.ts evaluate() in Phase 4 #1 via a new DB helper recentNewsEventForToken(). Conditionally fires only when news_events has a matching row within the last 6h, so non-event tokens are unaffected. Test baseline: pnpm test 79/79 passing (4 new wiring tests in eventWiring.test.ts). Production behaviour today: breakdown.event always 0 because NewsScanner is not yet instantiated in the main loop — the wiring is correct and dormant until that upstream integration happens."
+      "status": "passing",
+      "evidence": "Wired into src/index.ts evaluate() in Phase 4 #1 via Db.recentNewsEventForToken(). NewsScanner is instantiated and its runOnce() is wired into a 30-min interval in Phase 5. Chain proven by tests: src/tests/eventScore.test.ts (4 tests on the pure scorer) + src/tests/eventWiring.test.ts (4 tests on DB helper) + src/tests/newsScannerWiring.test.ts (7 tests covering empty-x_accounts inactive behaviour, persistConfirmedCandidates filtering, the persisted-event roundtrip, and persisted event yielding scoreEvent.score > 0). Total 86/86 vitest passing. Production behaviour: breakdown.event remains 0 until x_accounts is manually seeded with curated handles per docs/RUNBOOK.md — the loop logs a clear inactive warning at boot when seed is missing."
+    },
+    {
+      "id": "news-scanner-loop",
+      "description": "Periodic ingestion of curated X posts into news_events. Runs every 30 minutes (conservative for X free-tier rate limits). Filters candidates to those with at least one external CA confirmation (DexScreener or Birdeye) before persistence.",
+      "category": "discovery",
+      "verification_steps": [
+        "pnpm typecheck",
+        "pnpm test src/tests/newsScannerWiring.test.ts",
+        "Boot pnpm paper with empty x_accounts and confirm the inactive warning logs without crashing",
+        "Seed an x_accounts row, restart, and confirm [news] log lines appear after the first 30-minute tick"
+      ],
+      "status": "passing",
+      "evidence": "src/tests/newsScannerWiring.test.ts: 7/7 passing. Activation gated on cfg.ENABLE_NEWS_EVENTS && x.isConfigured() && x_accounts non-empty. When inactive, boot logs 'NewsScanner inactive: ...' with the specific reasons; the interval is never started so unconfigured users pay zero cost. Documented in docs/DECISIONS.md under 'NewsScanner inactive when seed empty'."
     },
     {
       "id": "scoring-narrative",

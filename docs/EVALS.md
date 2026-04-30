@@ -48,7 +48,13 @@ Until all 6 are true, the headline status in `PROGRESS.md` is `core-pipeline: fa
 
 ## Phase 4 #1 evidence template (eventScore wiring)
 
-When `NewsScanner` gets wired into the main loop, mark `scoring-event` as `passing` only when this query returns rows:
+`scoring-event` is `passing` based on test evidence (Phase 5):
+
+- `pnpm test src/tests/eventScore.test.ts` (4 tests on the pure scorer)
+- `pnpm test src/tests/eventWiring.test.ts` (4 tests on the DB helper)
+- `pnpm test src/tests/newsScannerWiring.test.ts` (7 tests covering NewsScanner.runOnce inactive-on-empty + persistConfirmedCandidates filtering + persisted-event roundtrip + non-zero scoreEvent chain)
+
+Production confirmation (separate, optional) requires this query to return rows after seeding `x_accounts` and running `pnpm paper`:
 
 ```sql
 SELECT token_address, master_score,
@@ -59,9 +65,20 @@ SELECT token_address, master_score,
   ORDER BY generated_at DESC LIMIT 10;
 ```
 
-Until then, the wiring is verified dormant via:
-- `pnpm test src/tests/eventWiring.test.ts` (4 tests covering empty-DB, multi-row, time-window, production-default cases)
-- `pnpm test src/tests/eventScore.test.ts` (4 tests on the pure scoring function)
+## Phase 5 evidence template (NewsScanner main-loop wiring)
+
+`news-scanner-loop` is `passing` based on:
+
+- `pnpm test src/tests/newsScannerWiring.test.ts` (7/7 passing)
+- Boot smoke test: with empty `x_accounts` the bot prints `NewsScanner inactive: ...` and proceeds without crashing.
+
+Production confirmation requires a seeded `x_accounts` row, a 30-min wait, and:
+
+```sql
+SELECT id, source, published_at, credibility, tokens_json
+  FROM news_events ORDER BY published_at DESC LIMIT 5;
+```
+followed by the `combined_signals` query above.
 
 ## SQL spot checks (run against `./data/bot.sqlite`)
 

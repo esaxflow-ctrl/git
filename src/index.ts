@@ -34,6 +34,7 @@ import { LiquidityScanner } from './scanners/liquidityScanner.js';
 import { discoverMultiSource } from './scanners/multiSourceDiscovery.js';
 import { WalletScanner } from './scanners/walletScanner.js';
 import { WalletDiscovery } from './scanners/walletDiscovery.js';
+import { NewsScanner } from './scanners/newsScanner.js';
 import { scoreTokenSafety } from './scoring/tokenSafetyScore.js';
 import { volumeAccelerationStrategy } from './strategies/volumeAccelerationStrategy.js';
 import { liquidityGrowthStrategy } from './strategies/liquidityGrowthStrategy.js';
@@ -83,7 +84,6 @@ async function main(): Promise<void> {
   const birdeye = new BirdeyeAdapter(cfg.BIRDEYE_API_KEY);
   const dex = new DexScreenerAdapter(cfg.DEXSCREENER_API_KEY);
   const x = new XAdapter(cfg.X_BEARER_TOKEN);
-  void x;
   void birdeye;
 
   const killSwitch = new KillSwitch(cfg.KILL_SWITCH_FILE);
@@ -92,6 +92,7 @@ async function main(): Promise<void> {
   const liquidity = new LiquidityScanner();
   const walletScanner = new WalletScanner(helius, db);
   const walletDiscovery = new WalletDiscovery({ helius, birdeye, dex, db });
+  const newsScanner = new NewsScanner(x, dex, birdeye, db);
 
   let live: LiveTrader | undefined;
   if (mode === 'live') {
@@ -116,6 +117,11 @@ async function main(): Promise<void> {
   const dashboardIntervalMs = 5_000;
   const walletPollIntervalMs = 60_000;
   const walletDiscoveryIntervalMs = 10 * 60_000;
+  // News polling is conservative because X free tier has very tight
+  // monthly read budgets (~100/mo). 30 minutes × N curated accounts is
+  // already a meaningful share of the budget for a free user; lower it
+  // only if you have paid X access.
+  const newsPollIntervalMs = 30 * 60_000;
 
   setInterval(() => {
     void dashboard.render().catch(() => {});
@@ -169,6 +175,52 @@ async function main(): Promise<void> {
     setTimeout(() => {
       void walletDiscovery.runOnce().catch(() => {});
     }, 30_000);
+  }
+
+  // News scanner: ingests CA-bearing posts from curated x_accounts into
+  // news_events, which the eventScore wiring in evaluate() reads from.
+  // Activates only when all three preconditions hold:
+  //   1. ENABLE_NEWS_EVENTS feature flag (config default: true)
+  //   2. X_BEARER_TOKEN is configured
+  //   3. x_accounts table has at least one curated handle
+  // When inactive, logs a clear warning at boot and never starts the
+  // interval — so an unconfigured user pays no CPU/quota cost and the
+  // event score stays at its safe-default 0 documented in DECISIONS.md.
+  const xAccountsCount = (
+    db.raw().prepare(`SELECT COUNT(*) as c FROM x_accounts`).get() as { c: number }
+  ).c;
+  const newsActive = cfg.ENABLE_NEWS_EVENTS && x.isConfigured() && xAccountsCount > 0;
+  if (cfg.ENABLE_NEWS_EVENTS && !newsActive) {
+    const reasons: string[] = [];
+    if (!x.isConfigured()) reasons.push('X_BEARER_TOKEN not set');
+    if (xAccountsCount === 0) reasons.push('x_accounts is empty');
+    console.warn(
+      chalk.yellow(
+        `NewsScanner inactive: ${reasons.join(' + ')}. Seed curated accounts to enable event scoring (see docs/RUNBOOK.md).`,
+      ),
+    );
+  }
+  if (newsActive) {
+    setInterval(() => {
+      void newsScanner
+        .runOnce()
+        .then((s) => {
+          if (s.persisted > 0) {
+            console.log(
+              chalk.cyan(
+                `[news] +${s.persisted} events from ${s.accounts} curated accounts (fetched ${s.fetched})`,
+              ),
+            );
+          }
+        })
+        .catch((e: unknown) => {
+          db.insertRiskEvent({
+            kind: 'rpc_unstable',
+            timestamp: Date.now(),
+            detail: `newsScanner: ${e instanceof Error ? e.message : String(e)}`,
+          });
+        });
+    }, newsPollIntervalMs);
   }
 
   // Main pipeline loop

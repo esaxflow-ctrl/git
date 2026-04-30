@@ -2,13 +2,46 @@
 
 ## Current Status
 
-**Headline:** `core-pipeline: failing` — paper trade volume is too low to measure expectancy. Code quality is healthy (typecheck clean, 75/75 tests pass) but the live `evaluate()` path only wires ~6 of the 12+ scoring/strategy modules the README promises. Result: master signal is artificially capped, paper-buy gate (`active.length >= 3`) clears too rarely, the user has observed only ~3 paper trades total before stalling.
+**Headline:** `core-pipeline: failing` — paper trade volume is still too low to measure expectancy. Code quality is healthy (typecheck clean, 86/86 tests pass) and the evaluate() path now reaches ~9 of the 14 weighted breakdown components. The remaining orphans (`buzz`, `narrative`, `pumpfun`, standalone `dexscreenerBoost`) keep the master signal partially capped. NewsScanner is now wired but inactive until `x_accounts` is seeded.
 
-**Branch:** `claude/solana-trading-bot-8F0kL`
-**Last commit:** `e8b784c` — research-backed PnL upgrades (exit-manager fix, smart-wallet wiring, sourceStack, freshness, ELITE auto-promotion, MEV detector, per-strategy expectancy)
-**Origin sync:** local is **1 ahead of origin**. `git push` reported success but `git status` says ahead-by-1. May be a fetch lag; should be re-pushed and verified before any new work.
+**Branch:** `claude/solana-trading-bot-8F0kL` — synced with origin after Phase 4 rebase.
+**Latest pushed commit:** `69307d4` (Phase 4 #1) — Phase 5 commit pending below.
 
-## Latest Update (2026-04-29 — Phase 4 #1)
+## Latest Update (2026-04-29 — Phase 5)
+
+**Wired `NewsScanner` into the main loop.** This closes the dormant half of Phase 4 #1: `eventScore` now has a real ingestion path (NewsScanner → news_events → recentNewsEventForToken → evaluate → breakdown.event), and the chain is fully test-covered.
+
+What was missing: NewsScanner existed with `fetchCuratedPosts()` and `persistEvent()` but was never instantiated in `src/index.ts`. The eventScore wiring shipped in Phase 4 was correct but always dormant because `news_events` was empty.
+
+How NewsScanner now enters the main loop:
+1. Two new methods on `NewsScanner`:
+   - `persistConfirmedCandidates(candidates)`: filters to candidates with at least one external CA confirmation (DexScreener or Birdeye), maps to `NewsEvent`, persists. Returns count persisted.
+   - `runOnce()`: calls `fetchCuratedPosts()` then `persistConfirmedCandidates()`. Short-circuits with `{accounts:0, fetched:0, persisted:0}` when X is unconfigured or `x_accounts` is empty.
+2. `index.ts` instantiates NewsScanner alongside the other scanners. At boot, queries `x_accounts` count and `x.isConfigured()`. When all three preconditions hold (`ENABLE_NEWS_EVENTS && x.isConfigured() && x_accounts.length > 0`), starts a 30-minute setInterval calling `newsScanner.runOnce()`.
+3. When inactive, logs a yellow `NewsScanner inactive: <reasons>. Seed curated accounts to enable event scoring.` warning at boot — and never starts the interval (zero CPU/quota cost).
+
+What happens when x_accounts is empty: bot starts cleanly, prints the inactive warning, all other features run normally. `breakdown.event` stays at its `emptyBreakdown()` default of 0. Verified by `src/tests/newsScannerWiring.test.ts` (7/7 passing).
+
+How eventScore becomes non-zero: when a curated x_account posts a CA, the next 30-minute tick fetches the post via `XAdapter.searchRecent`, confirms it on DexScreener or Birdeye, and persists it. The next time `evaluate()` runs against that token's snapshot, `recentNewsEventForToken()` returns the row and `scoreEvent()` is invoked, populating `breakdown.event`.
+
+Polling cadence: 30 minutes. Reasoning: X free tier is brutal (~100 reads/month). 30-min × N curated accounts is already a meaningful share of a free user's budget; lower it only with paid X access. Documented in DECISIONS.md.
+
+Files changed:
+- `src/scanners/newsScanner.ts` — added `persistConfirmedCandidates()` and `runOnce()`.
+- `src/index.ts` — added `NewsScanner` import, instantiation, boot-time inactive warning, conditional interval.
+- `src/tests/newsScannerWiring.test.ts` — new file, 7 tests covering empty-x_accounts inactive behaviour, candidate filtering, tokens_json shape, recentNewsEventForToken roundtrip, and the chain to non-zero scoreEvent.
+- `docs/FEATURES.json` — `scoring-event` flipped to `passing` with chain-test evidence; new `news-scanner-loop` feature added.
+- `docs/DECISIONS.md` — added entry for "NewsScanner inactive when seed empty" + "30-min polling default".
+- `docs/RUNBOOK.md` — added "Seeding x_accounts for event scoring" section.
+- `docs/EVALS.md` — added Phase 5 evidence template.
+
+Verification:
+```
+pnpm typecheck    # clean
+pnpm test         # 86/86 passing across 17 files
+```
+
+## Phase 4 #1 (2026-04-29)
 
 **Wired `eventScore` into `evaluate()` with safe-default behaviour.** This is the second of four orphaned scoring modules called out in Phase 1.
 
