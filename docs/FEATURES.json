@@ -1,6 +1,6 @@
 {
   "project": "solana-meme-trading-bot",
-  "last_updated": "2026-04-29 (Phase 3 #1)",
+  "last_updated": "2026-04-29 (Phase 4 #1: eventScore wired)",
   "notes": [
     "Status reflects whether the feature is wired end-to-end into the live paper pipeline (src/index.ts evaluate + loop), not just whether the module exists.",
     "'unknown' = the module is wired but we have no real-world evidence yet.",
@@ -120,11 +120,13 @@
       "description": "Verifies celebrity / political / brand / project launches against multi-source CA confirmation.",
       "category": "scoring",
       "verification_steps": [
-        "Module exists at src/scoring/eventScore.ts",
-        "Confirm wired into evaluate() — currently NOT wired"
+        "pnpm typecheck",
+        "pnpm test",
+        "Wire NewsScanner into the main loop (separate Phase) so news_events is populated",
+        "Run pnpm paper after wiring NewsScanner; confirm breakdown.event is non-zero in combined_signals when a relevant news event exists"
       ],
-      "status": "failing",
-      "evidence": "Module exists; src/tests/eventScore.test.ts: 4/4 passing. NOT wired into evaluate() — breakdown.event is always 0."
+      "status": "unknown",
+      "evidence": "Wired into src/index.ts evaluate() in Phase 4 #1 via a new DB helper recentNewsEventForToken(). Conditionally fires only when news_events has a matching row within the last 6h, so non-event tokens are unaffected. Test baseline: pnpm test 79/79 passing (4 new wiring tests in eventWiring.test.ts). Production behaviour today: breakdown.event always 0 because NewsScanner is not yet instantiated in the main loop — the wiring is correct and dormant until that upstream integration happens."
     },
     {
       "id": "scoring-narrative",

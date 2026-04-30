@@ -8,7 +8,31 @@
 **Last commit:** `e8b784c` — research-backed PnL upgrades (exit-manager fix, smart-wallet wiring, sourceStack, freshness, ELITE auto-promotion, MEV detector, per-strategy expectancy)
 **Origin sync:** local is **1 ahead of origin**. `git push` reported success but `git status` says ahead-by-1. May be a fetch lag; should be re-pushed and verified before any new work.
 
-## Latest Update (2026-04-29 — Phase 3 #1)
+## Latest Update (2026-04-29 — Phase 4 #1)
+
+**Wired `eventScore` into `evaluate()` with safe-default behaviour.** This is the second of four orphaned scoring modules called out in Phase 1.
+
+What was missing: `eventScore` had unit-test coverage but its score never reached the master signal. `breakdown.event` was always 0 because no caller invoked `scoreEvent()` from the live pipeline.
+
+How it now enters `evaluate()`:
+1. New DB helper `Db.recentNewsEventForToken(addr, windowMin=360)` queries `news_events` for the most recent matching row by `tokens_json LIKE '%addr%'` within the time window.
+2. When a row exists, `evaluate()` calls `scoreEvent()` with the snapshot, safety, smart-wallet, and volume sub-scores already computed earlier in the function.
+3. The result populates `breakdown.event` and its `reasons[]` are merged into the master signal `risks` field.
+
+Default behaviour when event data is missing: `recentNewsEventForToken()` returns `null`, the score branch is skipped, and `breakdown.event` stays at its `emptyBreakdown()` default of 0. **Production today: news_events is empty** because `NewsScanner` is not yet instantiated in the main loop — wiring is dormant until that separate integration is done. Documented in DECISIONS.md.
+
+Files changed:
+- `src/db/database.ts` — added `recentNewsEventForToken()`.
+- `src/index.ts` — added `scoreEvent` import; conditionally compute event score when a news row exists; populate `breakdown.event`; merge reasons into risks.
+- `src/tests/eventWiring.test.ts` — new file, 4 tests covering the DB helper's empty-DB, multi-row, time-window, and production-default cases.
+
+Verification:
+```
+pnpm typecheck         # clean
+pnpm test              # 79/79 passing (16 test files; +4 vs Phase 3)
+```
+
+## Phase 3 #1 (2026-04-29) — migration
 
 **Wired `migrationStrategy` into `evaluate()` for tokens whose discovery sources include `'migration'`.** This is one of the four orphaned scoring modules called out in Phase 1. Migration tokens (graduated from a launchpad to a real DEX) now contribute to `breakdown.migration` instead of always reading 0.
 

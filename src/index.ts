@@ -42,6 +42,7 @@ import { scoreTooLate } from './scoring/tooLateScore.js';
 import { scoreSmartWalletBuys } from './scoring/smartWalletSignal.js';
 import { scoreSourceStack, scoreFreshness } from './scoring/discoverySignals.js';
 import { migrationStrategy } from './strategies/migrationStrategy.js';
+import { scoreEvent } from './scoring/eventScore.js';
 import type { MasterSignal, RejectedTrade, TokenSnapshot } from './types.js';
 
 type Mode = 'scan' | 'paper' | 'live';
@@ -389,6 +390,42 @@ async function evaluate(
     migrationWarnings = m.warnings;
   }
 
+  // Event sub-score: fires only when the news_events table has a row
+  // mentioning this token within the last 6 hours. Production today:
+  // newsScanner is not yet instantiated, so news_events is empty and
+  // this branch is always a no-op (breakdown.event stays 0). When the
+  // newsScanner gets enabled later, this wiring is already in place —
+  // no second integration step needed.
+  let eventScoreVal: number | null = null;
+  let eventReasons: string[] = [];
+  const newsEvent = deps.db.recentNewsEventForToken(snap.address);
+  if (newsEvent) {
+    const postAgeMin = Math.max(0, (Date.now() - newsEvent.publishedAt) / 60_000);
+    const ev = scoreEvent({
+      sourceCredibility: newsEvent.credibility,
+      // Conservative defaults for the confirmation flags — we only have
+      // the snapshot's authoritative checks. The newsScanner records the
+      // CA-in-post linkage at insert time but doesn't expose individual
+      // confirmation flags through this query, so we assume the CA was
+      // present in the source if we found it via tokens_json. The other
+      // two flags reflect whether DexScreener/Birdeye returned data for
+      // this token (proxied via the snapshot).
+      caInOfficialSource: true,
+      caOnDexScreener: snap.pairAddress !== null,
+      caOnBirdeye: snap.top10HolderPct !== null,
+      competingCAs: 1,
+      buzzScore: 0,                 // buzz module not wired yet
+      smartWalletScore: smart.smartWallet,
+      volumeAccelerationScore: va.score,
+      snap,
+      safetyScore: safety.score,
+      postAgeMinutes: postAgeMin,
+      narrativeScore: 0,            // narrative module not wired yet
+    });
+    eventScoreVal = ev.score;
+    eventReasons = ev.reasons;
+  }
+
   const breakdown = emptyBreakdown();
   breakdown.tokenSafety = safety.score;
   breakdown.smartWallet = smart.smartWallet;
@@ -401,6 +438,7 @@ async function evaluate(
   breakdown.sourceStack = stack.score;
   breakdown.freshness = fresh.score;
   if (migrationScore !== null) breakdown.migration = migrationScore;
+  if (eventScoreVal !== null) breakdown.event = eventScoreVal;
   breakdown.tooLatePenalty = tooLate.penalty;
   breakdown.riskManagerApproved = true; // re-checked at trade time
 
@@ -424,7 +462,7 @@ async function evaluate(
     strategy,
     breakdown,
     confirmations: [...va.confirmations, ...lg.confirmations, ...stack.notes, ...fresh.notes, ...smart.notes, ...migrationConfirmations],
-    risks: [...va.warnings, ...lg.warnings, ...tooLate.reasons, ...fresh.warnings, ...migrationWarnings],
+    risks: [...va.warnings, ...lg.warnings, ...tooLate.reasons, ...fresh.warnings, ...migrationWarnings, ...eventReasons],
   });
 
   if (mode === 'scan') return signal;

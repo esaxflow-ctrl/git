@@ -71,6 +71,13 @@ Track important project decisions so future Claude sessions do not repeat debate
 - Tradeoff: Forgoes a category of profitable bot strategies.
 - Revisit if: Never.
 
+### Decision: Orphaned scoring modules are wired with neutral-when-absent defaults
+- Date: 2026-04-29 (Phase 3 #1 + Phase 4 #1)
+- Decision: When wiring an orphaned scoring module (e.g. `migrationStrategy`, `eventScore`), the call site in `evaluate()` is gated on the presence of its primary input (a discovery source tag for migration; a row in `news_events` for event). When absent, the breakdown field stays at its `emptyBreakdown()` default of 0. The strategy is never invoked with stale or fabricated data.
+- Reason: We want to do the wiring work once now, while the change is small and reviewable, even if the upstream data source isn't yet running. This avoids a second integration step later and keeps tests honest — the empty-data path is exercised explicitly. Inventing fake event/migration data to "make the score fire" would corrupt the master signal and mislead the per-strategy expectancy table.
+- Tradeoff: `breakdown.event` and `breakdown.migration` will read 0 until their respective scanners (`NewsScanner`, in-loop `migrationScanner` post-promotion) are enabled. Master score is unchanged for tokens those scanners don't surface.
+- Revisit if: We start fabricating event data for testing; we add another orphaned module under different shape than data-presence-gated.
+
 ### Decision: Helius free tier is the assumed RPC budget
 - Date: 2026-04-25
 - Decision: All adapters (Birdeye, Helius, DexScreener) are coded for free-tier rate limits with caches and rate-limited buckets. Wallet discovery polls top-15 trending pools every 6h to stay polite.

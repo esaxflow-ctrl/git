@@ -136,6 +136,62 @@ export class Db {
   }
 
   /**
+   * Most recent news event mentioning `tokenAddress`, within `windowMin`
+   * minutes. Reads from the news_events table, where `tokens_json` is a
+   * stringified JSON array of mentioned token addresses.
+   *
+   * Returns null when no matching event exists. Production today: this
+   * always returns null because the NewsScanner is not yet instantiated
+   * in the main loop. The eventScore wiring in evaluate() is gated on
+   * a non-null return, so the wiring is a no-op until newsScanner is
+   * enabled — exactly the safe-default behaviour the architecture wants.
+   */
+  recentNewsEventForToken(
+    tokenAddress: string,
+    windowMin = 6 * 60,
+    now: number = Date.now(),
+  ): {
+    id: string;
+    source: string;
+    title: string | null;
+    url: string | null;
+    publishedAt: number;
+    credibility: number;
+  } | null {
+    const since = now - windowMin * 60_000;
+    // tokens_json is a JSON array stringified at insert time; LIKE on the
+    // stringified address is sufficient because Solana addresses are
+    // base58-unique and we always quote them in the JSON.
+    const row = this.db
+      .prepare(
+        `SELECT id, source, title, url, published_at, credibility
+         FROM news_events
+         WHERE published_at >= ? AND tokens_json LIKE ?
+         ORDER BY published_at DESC
+         LIMIT 1`,
+      )
+      .get(since, `%${tokenAddress}%`) as
+      | {
+          id: string;
+          source: string;
+          title: string | null;
+          url: string | null;
+          published_at: number;
+          credibility: number;
+        }
+      | undefined;
+    if (!row) return null;
+    return {
+      id: row.id,
+      source: row.source,
+      title: row.title,
+      url: row.url,
+      publishedAt: row.published_at,
+      credibility: row.credibility,
+    };
+  }
+
+  /**
    * Recent buys of `tokenAddress` by watched wallets within the last
    * `windowSec` seconds. Returns the wallet record (with score/label) plus
    * the time of the buy. Used to feed `smartWallet` and

@@ -46,6 +46,23 @@ Until all 6 are true, the headline status in `PROGRESS.md` is `core-pipeline: fa
 - Latency line in dashboard shows sane RPC numbers (typically <500ms).
 - No exposure of API keys or wallet private keys in logs.
 
+## Phase 4 #1 evidence template (eventScore wiring)
+
+When `NewsScanner` gets wired into the main loop, mark `scoring-event` as `passing` only when this query returns rows:
+
+```sql
+SELECT token_address, master_score,
+       json_extract(breakdown_json, '$.event') AS event_score,
+       recommendation
+  FROM combined_signals
+  WHERE json_extract(breakdown_json, '$.event') > 0
+  ORDER BY generated_at DESC LIMIT 10;
+```
+
+Until then, the wiring is verified dormant via:
+- `pnpm test src/tests/eventWiring.test.ts` (4 tests covering empty-DB, multi-row, time-window, production-default cases)
+- `pnpm test src/tests/eventScore.test.ts` (4 tests on the pure scoring function)
+
 ## SQL spot checks (run against `./data/bot.sqlite`)
 
 ```sql
